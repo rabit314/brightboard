@@ -1,3 +1,5 @@
+<!-- HISTORICAL REFERENCE: This single-file prototype is not loaded by the application.
+     Maintain index.html, css/style.css, and js/app.js for the production website. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>

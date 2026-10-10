@@ -1,12 +1,12 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
-[![Live Demo](https://img.shields.io/badge/Live_Demo-GitHub_Pages-2EA44F?style=for-the-badge&logo=github)](https://rabit314.github.io/notebook/)
-[![Version](https://img.shields.io/badge/Version-v1.2.3-E4572E?style=for-the-badge)](https://github.com/rabit314/notebook)
+[![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.2.4-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
 
-🔗 **Live App**: [https://rabit314.github.io/notebook/](https://rabit314.github.io/notebook/)
+**Deployment**: Tested commits pushed to `main` update the website automatically through the connected Netlify deployment.
 
 ---
 
@@ -40,6 +40,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
+- **v1.2.4 Reliability Update**: Validated notebook restores, recoverable image assets, draft-aware saves with a persistent status indicator, selection controls that preserve drawing defaults, and accessible controls that remain reachable on mobile.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -47,12 +48,13 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Drag & Drop**: Drop image files (`.png`, `.jpg`, `.webp`, `.svg`) directly onto the board.
 
 ### 💾 Autosave, Export & Portable JSON Backup
-- **Automatic Persistence**: Debounced `localStorage` autosave with automatic orphaned image garbage collection.
+- **Automatic Persistence**: Debounced `localStorage` autosave, including text drafts, with a persistent save status and retry after storage failures. Images needed by Undo/Redo remain available.
 - **2× High-Resolution PNG Export**: One-click raster export cropped tightly to content bounding box with date & time timestamped filenames.
 - **JSON Backup & Restore**: Export your entire notebook as a `.json` backup file with date & time timestamps or import existing backups across devices.
+- **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.2.3`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.2.4`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
@@ -75,6 +77,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 | <kbd>Scroll</kbd> | **Scroll Up/Down** | Pan canvas vertically |
 | <kbd>Shift</kbd> + <kbd>Scroll</kbd> | **Scroll Left/Right** | Pan canvas horizontally |
 | <kbd>Ctrl</kbd> + <kbd>Scroll</kbd> | **Zoom In/Out** | Zoom canvas centered at cursor |
+| <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>+</kbd> / <kbd>−</kbd> | **Zoom In/Out** | Zoom the board with the keyboard |
 | <kbd>Ctrl</kbd> + <kbd>Z</kbd> | **Undo** | Undo last edit, clear, or deleted page |
 | <kbd>Ctrl</kbd> + <kbd>Y</kbd> / <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> | **Redo** | Redo last canvas action |
 | <kbd>Ctrl</kbd> + <kbd>A</kbd> | **Select All** | Select all objects on the current page |
@@ -95,7 +98,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 ## 🏗️ Project Architecture
 
 ```
-notebook/
+brightboard/
 ├── index.html         # Semantic HTML5 entry point with embedded offline SVGs
 ├── css/
 │   └── style.css      # Warm classroom design system & responsive media queries
@@ -129,15 +132,17 @@ Double-click `index.html` to open in any browser directly.
 
 ---
 
-## 🌐 GitHub Pages Deployment
+## 🌐 Netlify Deployment
 
-This repository is pre-configured for instant zero-config deployment to GitHub Pages:
+The website deploys automatically from this repository's `main` branch through Netlify:
 
-1. Go to your repository **Settings** ➔ **Pages**.
-2. Under **Build and deployment** ➔ **Source**, select **Deploy from a branch**.
-3. Choose `main` as branch and `/ (root)` as folder, then click **Save**.
-4. Your whiteboard app will be live at:
-   **`https://rabit314.github.io/notebook/`**
+1. Validate JavaScript with `node -c js/app.js`, run the regression suite with `node --test tests/*.test.cjs`, and check the affected browser flows.
+2. Commit the verified change and push to `origin main`.
+3. Netlify publishes the repository root as the static site; no build command is required.
+4. Check the connected site's deploy status in Netlify before relying on the new version.
+
+Repository: [rabit314/brightboard](https://github.com/rabit314/brightboard).
+`Start Here.txt` is a historical single-file prototype; the maintained application is `index.html`, `css/style.css`, and `js/app.js`.
 
 ---
 

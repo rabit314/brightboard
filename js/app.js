@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.2.3
+   Version: 1.2.4
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.2.3';
+const APP_VERSION = '1.2.4';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -17,6 +17,7 @@ const NOTES = ['#FFE9A8', '#FFD2A8', '#C4E8CE', '#C4DDF0', '#E4CDF2'];
 const HIST_MAX = 30;
 const TH_W = 144, TH_H = 81;
 const SAVE_KEY = 'brightboard.board.v1';
+const RECOVERY_KEY = 'brightboard.recovery.v1';
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -47,6 +48,7 @@ const state = {
 };
 
 const IMG = new Map();   // imgId -> { el, src, w, h }
+let boardGeneration = 0; // ignore asynchronous imports from a replaced notebook
 const pages = [];
 const deletedPagesHistory = []; // stack of { page, index } for Ctrl+Z restoration
 const page = () => pages[state.pageIndex] || pages[0];
@@ -72,9 +74,11 @@ let needsRender = true;
 let spaceHeld = false;
 let modalOpen = false;
 let clipObjects = null;  // clipboard objects array for multi-copy/paste
+let clipImages = [];     // self-contained assets for internal clipboard fallback
 let lastPtr = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 const activePtrs = new Map();   // pointerId -> {x,y}  (for pinch gestures)
 let lastTapTime = 0;     // for mobile double-tap detection
+let lastTapPoint = null;
 
 const getObject = id => page().objects.find(o => o.id === id);
 const getSelectedObjects = () => page().objects.filter(o => state.selectedIds.has(o.id));
@@ -136,8 +140,13 @@ window.addEventListener('resize', resizeCanvas);
 
 const worldFromClient = (cx, cy) => {
   const v = page().view;
-  return { x: (cx - v.panX) / v.zoom, y: (cy - v.panY) / v.zoom };
+  return { x: clamp((cx - v.panX) / v.zoom, -1e9, 1e9), y: clamp((cy - v.panY) / v.zoom, -1e9, 1e9) };
 };
+
+function constrainView(v) {
+  v.panX = clamp(v.panX, -1e9, 1e9);
+  v.panY = clamp(v.panY, -1e9, 1e9);
+}
 
 function setZoom(z, cx = VW / 2, cy = VH / 2) {
   const v = page().view;
@@ -145,6 +154,7 @@ function setZoom(z, cx = VW / 2, cy = VH / 2) {
   v.zoom = clamp(z, 0.2, 5);
   v.panX = cx - wx * v.zoom;
   v.panY = cy - wy * v.zoom;
+  constrainView(v);
   updateZoomLabel();
   needsRender = true;
 }
@@ -161,6 +171,7 @@ function fitView() {
   v.zoom = clamp(Math.min((VW - 100) / Math.max(b.w, 1), (VH - 190) / Math.max(b.h, 1)), 0.2, 2);
   v.panX = (VW - b.w * v.zoom) / 2 - b.x * v.zoom;
   v.panY = (VH - b.h * v.zoom) / 2 - b.y * v.zoom;
+  constrainView(v);
   updateZoomLabel();
   needsRender = true;
 }
@@ -200,7 +211,8 @@ function drawBackgroundPattern(c, zoom, bg, [wx0, wy0, wx1, wy1]) {
   if (bg === 'blank') return;
   c.save();
   if (bg === 'grid') {
-    const s = 40;
+    let s = 40;
+    while ((wx1 - wx0 + wy1 - wy0) / s > 2000) s *= 2;
     c.strokeStyle = 'rgba(35,40,47,0.075)';
     c.lineWidth = 1 / zoom;
     c.beginPath();
@@ -209,7 +221,7 @@ function drawBackgroundPattern(c, zoom, bg, [wx0, wy0, wx1, wy1]) {
     c.stroke();
   } else if (bg === 'dots') {
     let s = 40;
-    while (((wx1 - wx0) / s) * ((wy1 - wy0) / s) > 3500) s *= 2;
+    while ((Math.ceil((wx1 - wx0) / s) + 2) * (Math.ceil((wy1 - wy0) / s) + 2) > 3500) s *= 2;
     const r = 2 / zoom;
     c.fillStyle = 'rgba(35,40,47,0.22)';
     c.beginPath();
@@ -221,7 +233,8 @@ function drawBackgroundPattern(c, zoom, bg, [wx0, wy0, wx1, wy1]) {
     }
     c.fill();
   } else if (bg === 'ruled') {
-    const s = 52;
+    let s = 52;
+    while ((wy1 - wy0) / s > 1000) s *= 2;
     c.strokeStyle = 'rgba(35,40,47,0.10)';
     c.lineWidth = 1 / zoom;
     c.beginPath();
@@ -280,10 +293,10 @@ function drawStroke(c, o) {
     } else {
       c.beginPath();
       c.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length - 1; i++) {
-        c.quadraticCurveTo(pts[i].x, pts[i].y, (pts[i].x + pts[i+1].x) / 2, (pts[i].y + pts[i+1].y) / 2);
+      for (const seg of strokeSegments(o)) {
+        if (seg.cx === undefined) c.lineTo(seg.x1, seg.y1);
+        else c.quadraticCurveTo(seg.cx, seg.cy, seg.x1, seg.y1);
       }
-      c.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
       c.stroke();
     }
     c.restore();
@@ -298,18 +311,12 @@ function drawStroke(c, o) {
     c.fill();
     return;
   }
-  let px = pts[0].x, py = pts[0].y;
-  for (let k = 1; k < pts.length; k++) {
-    const last = k === pts.length - 1;
-    const nx = last ? pts[k].x : (pts[k].x + pts[k + 1].x) / 2;
-    const ny = last ? pts[k].y : (pts[k].y + pts[k + 1].y) / 2;
-    c.lineWidth = Math.max(0.5, o.width * (pts[k - 1].w + pts[k].w) / 2);
+  for (const seg of strokeSegments(o)) {
+    c.lineWidth = seg.width;
     c.beginPath();
-    c.moveTo(px, py);
-    c.quadraticCurveTo(pts[k].x, pts[k].y, nx, ny);
+    c.moveTo(seg.x0, seg.y0);
+    c.quadraticCurveTo(seg.cx, seg.cy, seg.x1, seg.y1);
     c.stroke();
-    px = nx;
-    py = ny;
   }
 }
 
@@ -366,15 +373,12 @@ function drawShape(c, o) {
     c.moveTo(o.x0, o.y0);
     c.lineTo(o.x1, o.y1);
     c.stroke();
-    const ang = Math.atan2(o.y1 - o.y0, o.x1 - o.x0);
-    const len = Math.hypot(o.x1 - o.x0, o.y1 - o.y0);
-    const hl = Math.min(len * 0.4, 12 + o.width * 3.5), hw = hl * 0.48;
-    const bx = o.x1 - Math.cos(ang) * hl, by = o.y1 - Math.sin(ang) * hl;
+    const head = arrowHead(o);
     c.fillStyle = o.color;
     c.beginPath();
-    c.moveTo(o.x1, o.y1);
-    c.lineTo(bx - Math.sin(ang) * hw, by + Math.cos(ang) * hw);
-    c.lineTo(bx + Math.sin(ang) * hw, by - Math.cos(ang) * hw);
+    c.moveTo(head[0].x, head[0].y);
+    c.lineTo(head[1].x, head[1].y);
+    c.lineTo(head[2].x, head[2].y);
     c.closePath();
     c.fill();
   }
@@ -405,7 +409,7 @@ function drawTextObj(c, o) {
 
 function drawImageObj(c, o) {
   const rec = IMG.get(o.imgId);
-  if (!rec || !rec.el.complete) return;
+  if (!rec || rec.status === 'error' || !rec.el.complete || rec.el.naturalWidth === 0) return;
   c.save();
   if (o.angle) {
     c.translate(o.x + o.w / 2, o.y + o.h / 2);
@@ -469,11 +473,22 @@ function stickyLines(c, o) {
   const key = o.w + '|' + o.fontSize + '|' + (o.text || '');
   if (o._wrap && o._wrap.key === key) return o._wrap.lines;
   c.font = `600 ${o.fontSize}px Caveat, cursive`;
-  const maxW = o.w - 28, out = [];
+  const maxW = Math.max(1, o.w - 28), out = [];
   for (const para of (o.text || '').split('\n')) {
     if (para === '') { out.push(''); continue; }
     let cur = '';
     for (const wd of para.split(' ')) {
+      if (c.measureText(wd).width > maxW) {
+        if (cur) { out.push(cur); cur = ''; }
+        const letters = typeof Intl.Segmenter === 'function'
+          ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(wd)].map(part => part.segment)
+          : Array.from(wd);
+        for (const letter of letters) {
+          if (cur && c.measureText(cur + letter).width > maxW) { out.push(cur); cur = ''; }
+          cur += letter;
+        }
+        continue;
+      }
       const t = cur ? cur + ' ' + wd : wd;
       if (c.measureText(t).width <= maxW || !cur) cur = t;
       else { out.push(cur); cur = wd; }
@@ -745,6 +760,59 @@ function distSeg(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+function* strokeSegments(o) {
+  const pts = o.points;
+  if (!pts || pts.length < 2) return;
+  let x0 = pts[0].x, y0 = pts[0].y;
+  for (let i = 1; i < pts.length; i++) {
+    const last = i === pts.length - 1;
+    const x1 = last ? pts[i].x : (pts[i].x + pts[i + 1].x) / 2;
+    const y1 = last ? pts[i].y : (pts[i].y + pts[i + 1].y) / 2;
+    const seg = { x0, y0, x1, y1, width: o.mode === 'hi' ? o.width : Math.max(0.5, o.width * (pts[i - 1].w + pts[i].w) / 2) };
+    if (!(o.mode === 'hi' && last)) { seg.cx = pts[i].x; seg.cy = pts[i].y; }
+    yield seg;
+    x0 = x1; y0 = y1;
+  }
+}
+
+function arrowHead(o) {
+  const ang = Math.atan2(o.y1 - o.y0, o.x1 - o.x0);
+  const len = Math.hypot(o.x1 - o.x0, o.y1 - o.y0);
+  const hl = Math.min(len * 0.4, 12 + o.width * 3.5), hw = hl * 0.48;
+  const bx = o.x1 - Math.cos(ang) * hl, by = o.y1 - Math.sin(ang) * hl;
+  return [
+    { x: o.x1, y: o.y1 },
+    { x: bx - Math.sin(ang) * hw, y: by + Math.cos(ang) * hw },
+    { x: bx + Math.sin(ang) * hw, y: by - Math.cos(ang) * hw }
+  ];
+}
+
+function quadraticHit(p, seg, radius, depth = 0) {
+  const { x0, y0, x1, y1, cx, cy } = seg;
+  if (cx === undefined) return distSeg(p.x, p.y, x0, y0, x1, y1) <= radius;
+  if (p.x < Math.min(x0, x1, cx) - radius || p.x > Math.max(x0, x1, cx) + radius ||
+      p.y < Math.min(y0, y1, cy) - radius || p.y > Math.max(y0, y1, cy) + radius) return false;
+  const flatness = distSeg(cx, cy, x0, y0, x1, y1);
+  if (flatness <= 0.25 || depth >= 18) return distSeg(p.x, p.y, x0, y0, x1, y1) <= radius + Math.min(flatness, 0.25);
+  const ax = (x0 + cx) / 2, ay = (y0 + cy) / 2;
+  const bx = (cx + x1) / 2, by = (cy + y1) / 2;
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  return quadraticHit(p, { x0, y0, cx: ax, cy: ay, x1: mx, y1: my }, radius, depth + 1) ||
+    quadraticHit(p, { x0: mx, y0: my, cx: bx, cy: by, x1, y1 }, radius, depth + 1);
+}
+
+function triangleHit(p, vertices, tol) {
+  const cross = (a, b) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  const signs = vertices.map((a, i) => cross(a, vertices[(i + 1) % 3]));
+  const [a, b, c] = vertices;
+  const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  if (Math.abs(area) > 1e-9 && !(signs.some(v => v < 0) && signs.some(v => v > 0))) return true;
+  return vertices.some((a, i) => {
+    const b = vertices[(i + 1) % 3];
+    return distSeg(p.x, p.y, a.x, a.y, b.x, b.y) <= tol;
+  });
+}
+
 function boundsOf(o) {
   if (!o) return null;
   switch (o.type) {
@@ -755,13 +823,18 @@ function boundsOf(o) {
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
         x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
       }
-      const pad = o.width / 2 + 2;
+      let maxWidth = o.width;
+      if (o.mode !== 'hi') for (const p of o.points) maxWidth = Math.max(maxWidth, o.width * p.w);
+      const pad = Math.max(0.6, maxWidth / 2) + 2;
       return { x: x0 - pad, y: y0 - pad, w: Math.max(4, (x1 - x0) + pad * 2), h: Math.max(4, (y1 - y0) + pad * 2) };
     }
     case 'line': case 'arrow': {
-      const pad = o.width / 2 + 4;
-      const x = Math.min(o.x0, o.x1) - pad, y = Math.min(o.y0, o.y1) - pad;
-      return { x, y, w: Math.max(6, Math.abs(o.x1 - o.x0) + pad * 2), h: Math.max(6, Math.abs(o.y1 - o.y0) + pad * 2) };
+      const pad = Math.max(1, o.width) / 2 + 4;
+      const vertices = [{ x: o.x0, y: o.y0 }, { x: o.x1, y: o.y1 }];
+      if (o.type === 'arrow') vertices.push(...arrowHead(o));
+      const x0 = Math.min(...vertices.map(p => p.x)), y0 = Math.min(...vertices.map(p => p.y));
+      const x1 = Math.max(...vertices.map(p => p.x)), y1 = Math.max(...vertices.map(p => p.y));
+      return { x: x0 - pad, y: y0 - pad, w: Math.max(6, x1 - x0 + pad * 2), h: Math.max(6, y1 - y0 + pad * 2) };
     }
     case 'rect': case 'ellipse': {
       const pad = o.width / 2 + 3;
@@ -832,16 +905,15 @@ function contentBounds(objs) {
 function objectHit(o, p, tol) {
   const t = tol || 0;
   if (o.type === 'stroke') {
-    const th = t + o.width / 2 + 4;
+    if (!o.points || !o.points.length) return false;
     if (o.points.length === 1)
-      return Math.hypot(p.x - o.points[0].x, p.y - o.points[0].y) <= th;
-    for (let i = 1; i < o.points.length; i++) {
-      if (distSeg(p.x, p.y, o.points[i-1].x, o.points[i-1].y, o.points[i].x, o.points[i].y) <= th) return true;
-    }
+      return Math.hypot(p.x - o.points[0].x, p.y - o.points[0].y) <= t + 4 + (o.mode === 'hi' ? o.width / 2 : Math.max(0.6, o.width * o.points[0].w / 2));
+    for (const seg of strokeSegments(o)) if (quadraticHit(p, seg, t + seg.width / 2 + 4)) return true;
     return false;
   }
   if (o.type === 'line' || o.type === 'arrow') {
-    return distSeg(p.x, p.y, o.x0, o.y0, o.x1, o.y1) <= t + o.width / 2 + 5;
+    return distSeg(p.x, p.y, o.x0, o.y0, o.x1, o.y1) <= t + Math.max(1, o.width) / 2 + 5 ||
+      (o.type === 'arrow' && triangleHit(p, arrowHead(o), t + 4));
   }
 
   let tp = p;
@@ -873,7 +945,7 @@ function objectHit(o, p, tol) {
     };
   }
 
-  const s = 4 + t;
+  const s = 4 + t + (o.type === 'rect' || o.type === 'ellipse' ? Math.max(1, o.width) / 2 : 0);
   if (o.type === 'ellipse') {
     const rx = w / 2 + s, ry = h / 2 + s;
     if (rx <= 0 || ry <= 0) return false;
@@ -897,42 +969,92 @@ function hitTest(p, tol) {
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 function pinchState() {
-  const [a, b] = [...activePtrs.values()];
+  const [a, b] = [...activePtrs.values()].filter(p => p.type === 'touch');
   return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
 }
 
+function finishGesture({ cancel = false, preservePointers = false } = {}) {
+  const a = action;
+  action = null;
+  if (!preservePointers) {
+    for (const id of activePtrs.keys()) { try { canvas.releasePointerCapture(id); } catch (_) {} }
+    activePtrs.clear();
+  }
+  if (!a) return;
+  switch (a.type) {
+    case 'draw':
+      if (!cancel) { pushUndo(); page().objects.push(a.temp); scheduleThumb(); }
+      break;
+    case 'shape':
+      if (!cancel) commitShape(a);
+      break;
+    case 'place':
+      if (!cancel && !a.moved) createDraftText(a.x, a.y);
+      break;
+    case 'sticky':
+      if (!cancel) createStickyFrom(a);
+      break;
+    case 'erase':
+    case 'move':
+    case 'resize':
+    case 'rotate':
+      if (a.snapped || a.duplicated) scheduleThumb();
+      break;
+    case 'pan':
+    case 'pinch':
+      scheduleSave();
+      break;
+  }
+  refreshContextUI();
+  canvas.style.cursor = spaceHeld ? 'grab' : (CURSORS[state.tool] || 'default');
+  needsRender = true;
+}
+
 canvas.addEventListener('pointerdown', e => {
+  if (![0, 1, 2].includes(e.button)) return;
+  if (action && action.pointerId !== e.pointerId &&
+      (e.pointerType !== 'touch' || (action.type !== 'pinch' && action.pointerType !== 'touch'))) return;
+  if (activePtrs.size >= 2 && !activePtrs.has(e.pointerId)) return;
   hideHint();
   lastPtr = { x: e.clientX, y: e.clientY };
-  activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
 
   // Two fingers on touch = pinch zoom + pan
-  if (activePtrs.size === 2) {
+  if ([...activePtrs.values()].filter(p => p.type === 'touch').length === 2) {
+    finishGesture({ cancel: true, preservePointers: true });
     commitEditor();
     action = { type: 'pinch', ...pinchState() };
+    lastTapTime = 0;
+    needsRender = true;
     return;
   }
-  if (activePtrs.size > 2) return;
+  if (action) finishGesture({ cancel: true, preservePointers: true });
 
   // Double tap detection for mobile/touch
   const now = performance.now();
-  if (e.pointerType === 'touch' && now - lastTapTime < 300) {
+  if (state.tool === 'select' && e.pointerType === 'touch' && lastTapTime > 0 && now - lastTapTime < 300 &&
+      lastTapPoint && Math.hypot(e.clientX - lastTapPoint.x, e.clientY - lastTapPoint.y) < 24) {
     const w = worldFromClient(e.clientX, e.clientY);
     const hit = hitTest(w, 4);
     if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
       state.selectedIds = new Set([hit.id]);
+      resetNudgeGroup();
+      refreshContextUI();
       openEditor(hit, hit.type);
+      lastTapTime = 0;
       return;
     }
   }
-  lastTapTime = now;
+  if (e.pointerType === 'touch') {
+    lastTapTime = now;
+    lastTapPoint = { x: e.clientX, y: e.clientY };
+  }
 
   // Right / middle mouse, or holding Space = pan
   if (e.button === 1 || e.button === 2 || spaceHeld) { startPan(e); return; }
   if (e.button !== 0) return;
-
-  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-  e.preventDefault();
 
   if (document.activeElement && document.activeElement !== document.body &&
       document.activeElement !== $('textEditor')) document.activeElement.blur();
@@ -971,27 +1093,38 @@ canvas.addEventListener('pointerdown', e => {
   } else if (t === 'hand') {
     startPan(e);
   }
+  if (action) {
+    action.pointerId = e.pointerId;
+    action.pointerType = e.pointerType;
+    action.startClientX = e.clientX;
+    action.startClientY = e.clientY;
+  }
   needsRender = true;
 });
 
 canvas.addEventListener('pointermove', e => {
-  lastPtr = { x: e.clientX, y: e.clientY };
-  if (activePtrs.has(e.pointerId)) activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!action || action.pointerId === e.pointerId || (action.type === 'pinch' && activePtrs.has(e.pointerId)))
+    lastPtr = { x: e.clientX, y: e.clientY };
+  if (activePtrs.has(e.pointerId)) activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
   updateCursorOverlays(e);
 
   if (action && action.type === 'pinch') {
+    if (!activePtrs.has(e.pointerId)) return;
     if (activePtrs.size >= 2) {
       const st = pinchState();
       const v = page().view;
       v.panX += st.mx - action.mx;
       v.panY += st.my - action.my;
       if (action.d > 20) setZoom(v.zoom * st.d / action.d, st.mx, st.my);
+      constrainView(v);
       action.mx = st.mx;
       action.my = st.my;
       action.d = st.d;
     }
     return;
   }
+  if (action && action.pointerId !== e.pointerId) return;
+  if (action && e.pointerType === 'touch' && Math.hypot(e.clientX - action.startClientX, e.clientY - action.startClientY) > 12) lastTapTime = 0;
 
   if (state.tool === 'laser' && action && action.type === 'laser') {
     const lp = laserPts[laserPts.length - 1];
@@ -1043,6 +1176,7 @@ canvas.addEventListener('pointermove', e => {
     case 'pan':
       page().view.panX += e.clientX - action.lx;
       page().view.panY += e.clientY - action.ly;
+      constrainView(page().view);
       action.lx = e.clientX; action.ly = e.clientY;
       needsRender = true;
       break;
@@ -1053,52 +1187,37 @@ canvas.addEventListener('pointermove', e => {
 });
 
 canvas.addEventListener('pointerup', e => {
+  const wasActive = activePtrs.has(e.pointerId);
   activePtrs.delete(e.pointerId);
   try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
   if (action && action.type === 'pinch') {
-    if (activePtrs.size < 2) action = null;
+    if (wasActive && activePtrs.size < 2) finishGesture({ preservePointers: true });
     return;
   }
-  if (!action) return;
-  const a = action;
-  action = null;
-
-  switch (a.type) {
-    case 'draw':
-      pushUndo();
-      page().objects.push(a.temp);
-      scheduleThumb();
-      break;
-    case 'shape':
-      commitShape(a);
-      break;
-    case 'place':
-      if (!a.moved) createDraftText(a.x, a.y);
-      break;
-    case 'sticky':
-      createStickyFrom(a);
-      break;
-    case 'erase':
-    case 'move':
-    case 'resize':
-    case 'rotate':
-      if (a.snapped) { scheduleThumb(); scheduleSave(); }
-      break;
-    case 'pan':
-      scheduleSave();
-      break;
-  }
-  canvas.style.cursor = spaceHeld ? 'grab' : (CURSORS[state.tool] || 'default');
-  needsRender = true;
+  if (!action || action.pointerId !== e.pointerId) return;
+  finishGesture({ preservePointers: true });
 });
 
 canvas.addEventListener('pointercancel', e => {
+  const wasActive = activePtrs.has(e.pointerId);
   activePtrs.delete(e.pointerId);
   try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
-  action = null;
-  needsRender = true;
+  if (action && (action.pointerId === e.pointerId || (action.type === 'pinch' && wasActive)))
+    finishGesture({ cancel: true, preservePointers: true });
 });
+
+function suspendInteractions() {
+  spaceHeld = false;
+  lastTapTime = 0;
+  finishGesture({ cancel: true });
+  canvas.style.cursor = CURSORS[state.tool] || 'default';
+  hoveredHandle = null;
+  $('eraserRing').style.display = 'none';
+  $('laserDot').style.display = 'none';
+  saveNow();
+}
+window.addEventListener('blur', suspendInteractions);
 
 canvas.addEventListener('pointerleave', () => {
   $('eraserRing').style.display = 'none';
@@ -1112,6 +1231,8 @@ canvas.addEventListener('dblclick', e => {
   const hit = hitTest(w, 0);
   if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
     state.selectedIds = new Set([hit.id]);
+    resetNudgeGroup();
+    refreshContextUI();
     openEditor(hit, hit.type);
   } else if (!hit) {
     createDraftText(w.x, w.y);
@@ -1139,6 +1260,7 @@ canvas.addEventListener('wheel', e => {
     v.panY -= e.deltaY;
     needsRender = true;
   }
+  constrainView(page().view);
   scheduleSave();
 }, { passive: false });
 
@@ -1228,7 +1350,8 @@ function eraseAt(w, a) {
 
 function startPan(e) {
   try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-  action = { type: 'pan', lx: e.clientX, ly: e.clientY };
+  action = { type: 'pan', pointerId: e.pointerId, pointerType: e.pointerType, lx: e.clientX, ly: e.clientY,
+    startClientX: e.clientX, startClientY: e.clientY };
   canvas.style.cursor = 'grabbing';
 }
 
@@ -1255,24 +1378,8 @@ function updateCursorOverlays(e) {
    7. SELECTION & MULTI-SELECTION (Marquee, Move, Resize, Duplicate)
    ================================================================ */
 function syncToolbarToSelected(o) {
-  if (!o) return;
-  if (o.color) {
-    if (MARKERS.includes(o.color)) setColor(o.color);
-    else if (NOTES.includes(o.color)) setNoteColor(o.color);
-  }
-  if (o.width !== undefined) {
-    state.size = o.width;
-    $('widthRange').value = o.width;
-    $('widthVal').textContent = o.width;
-  }
-  if (o.fontSize !== undefined) {
-    state.fontSize = o.fontSize;
-    $('fontVal').textContent = o.fontSize;
-  }
-  if (o.fill !== undefined) {
-    state.fill = !!o.fill;
-    $('fillBtn').classList.toggle('on', state.fill);
-  }
+  // Selected-object values belong to the controls, not the drawing defaults.
+  refreshContextUI();
 }
 
 function updateMarqueeSelection(a) {
@@ -1290,9 +1397,12 @@ function updateMarqueeSelection(a) {
     }
   }
   state.selectedIds = currentSelection;
+  resetNudgeGroup();
+  refreshContextUI();
 }
 
 function handleSelectDown(e, w) {
+  resetNudgeGroup();
   const handleInfo = getSelectionHandleAt(e.clientX, e.clientY, page().view);
   if (handleInfo) {
     if (handleInfo.type === 'resize') {
@@ -1342,15 +1452,16 @@ function handleSelectDown(e, w) {
     const currentSelected = getSelectedObjects();
     if (e.altKey) {
       // Alt-drag = quick duplicate all selected
+      const offset = constrainTranslation(currentSelected, 16, 16);
       const clones = currentSelected.map(o => {
         const c = cloneObj(o);
-        translateObj(c, 16, 16);
+        translateObj(c, offset.dx, offset.dy);
         return c;
       });
       pushUndo();
       clones.forEach(c => page().objects.push(c));
       state.selectedIds = new Set(clones.map(c => c.id));
-      action = { type: 'move', objects: clones, lastW: w, startW: w, snapped: false };
+      action = { type: 'move', objects: clones, lastW: w, startW: w, snapped: false, duplicated: true };
     } else {
       action = { type: 'move', objects: currentSelected, lastW: w, startW: w, snapped: false };
     }
@@ -1368,6 +1479,7 @@ function handleSelectDown(e, w) {
       prevSelected: new Set(state.selectedIds)
     };
   }
+  refreshContextUI();
 }
 
 function translateObj(o, dx, dy) {
@@ -1376,54 +1488,96 @@ function translateObj(o, dx, dy) {
   o.x += dx; o.y += dy;
 }
 
-function doMove(w, a) {
-  if (!a.snapped) {
-    if (Math.hypot(w.x - a.startW.x, w.y - a.startW.y) < 3 / page().view.zoom) return;
-    pushUndo();
-    a.snapped = true;
+function* objectCoordinates(o) {
+  if (o.type === 'stroke') { yield* o.points; return; }
+  if (o.x0 !== undefined) { yield { x: o.x0, y: o.y0 }; yield { x: o.x1, y: o.y1 }; return; }
+  yield { x: o.x, y: o.y };
+}
+
+function constrainTranslation(objects, dx, dy) {
+  let minX = -Infinity, maxX = Infinity, minY = -Infinity, maxY = Infinity;
+  for (const o of objects) for (const p of objectCoordinates(o)) {
+    minX = Math.max(minX, -1e9 - p.x); maxX = Math.min(maxX, 1e9 - p.x);
+    minY = Math.max(minY, -1e9 - p.y); maxY = Math.min(maxY, 1e9 - p.y);
   }
-  const dx = w.x - a.lastW.x;
-  const dy = w.y - a.lastW.y;
+  return { dx: clamp(dx, minX, maxX), dy: clamp(dy, minY, maxY) };
+}
+
+function constrainResizeScale(s, a, ax, ay) {
+  let minScale = 0.06, maxScale = 14;
+  const limitValue = (value, min, max) => {
+    minScale = Math.max(minScale, Math.min(min, value) / value);
+    maxScale = Math.min(maxScale, max / value);
+  };
+  const limitCoordinate = (value, anchor) => {
+    const delta = value - anchor;
+    if (!delta) return;
+    const lo = (-1e9 - anchor) / delta, hi = (1e9 - anchor) / delta;
+    minScale = Math.max(minScale, Math.min(lo, hi));
+    maxScale = Math.min(maxScale, Math.max(lo, hi));
+  };
+  for (const o of a.sos) {
+    for (const p of objectCoordinates(o)) { limitCoordinate(p.x, ax); limitCoordinate(p.y, ay); }
+    if (o.width !== undefined) limitValue(o.width, 0.5, 1e6);
+    if (o.fontSize !== undefined) limitValue(o.fontSize, o.type === 'sticky' ? 10 : 8, 10000);
+    if (o.w !== undefined) { limitValue(o.w, 12, 1e9); limitValue(o.h, 12, 1e9); }
+  }
+  if (s > maxScale) return Math.max(minScale, maxScale * (1 - Number.EPSILON * 4));
+  return clamp(s, minScale, maxScale);
+}
+
+function hasValidGeometry(o) {
+  for (const p of objectCoordinates(o)) if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 1e9 || Math.abs(p.y) > 1e9) return false;
+  for (const [key, max] of [['width', 1e6], ['fontSize', 10000], ['w', 1e9], ['h', 1e9]])
+    if (o[key] !== undefined && (!Number.isFinite(o[key]) || o[key] < 0.01 || o[key] > max)) return false;
+  return o.angle === undefined || Number.isFinite(o.angle);
+}
+
+function doMove(w, a) {
+  if (!a.snapped && Math.hypot(w.x - a.startW.x, w.y - a.startW.y) < 3 / page().view.zoom) return;
+  const { dx, dy } = constrainTranslation(a.objects, w.x - a.lastW.x, w.y - a.lastW.y);
+  a.lastW = w;
+  if (!dx && !dy) return;
+  if (!a.snapped) { if (!a.duplicated) pushUndo(); a.snapped = true; }
   for (const o of a.objects) {
     translateObj(o, dx, dy);
   }
-  a.lastW = w;
   needsRender = true;
 }
 
 function doResize(w, a) {
-  if (!a.snapped) {
-    if (Math.hypot(w.x - a.startW.x, w.y - a.startW.y) < 4 / page().view.zoom) return;
-    pushUndo();
-    a.snapped = true;
-  }
+  if (!a.snapped && Math.hypot(w.x - a.startW.x, w.y - a.startW.y) < 4 / page().view.zoom) return;
   const sb = a.startBounds;
   const ax = a.handle.includes('w') ? sb.x + sb.w : sb.x;
   const ay = a.handle.includes('n') ? sb.y + sb.h : sb.y;
   let s = Math.max(
-    (a.handle.includes('w') ? ax - w.x : w.x - ax) / Math.max(sb.w, 1),
-    (a.handle.includes('n') ? ay - w.y : w.y - ay) / Math.max(sb.h, 1)
+    1 + (a.handle.includes('w') ? a.startW.x - w.x : w.x - a.startW.x) / Math.max(sb.w, 1),
+    1 + (a.handle.includes('n') ? a.startW.y - w.y : w.y - a.startW.y) / Math.max(sb.h, 1)
   );
-  s = clamp(s, 0.06, 14);
-
-  a.objects.forEach((o, idx) => {
+  s = constrainResizeScale(s, a, ax, ay);
+  if (!a.snapped && Math.abs(s - 1) < 1e-12) return;
+  const resized = a.sos.map(o => ({ ...o }));
+  resized.forEach((o, idx) => {
     const so = a.sos[idx];
     if (o.type === 'stroke') {
       o.points = so.points.map(p => ({ x: ax + (p.x - ax) * s, y: ay + (p.y - ay) * s, w: p.w }));
-      o.width = Math.max(0.5, so.width * s);
+      o.width = so.width * s;
     } else if (o.x0 !== undefined) {
       o.x0 = ax + (so.x0 - ax) * s; o.y0 = ay + (so.y0 - ay) * s;
       o.x1 = ax + (so.x1 - ax) * s; o.y1 = ay + (so.y1 - ay) * s;
-      o.width = Math.max(0.5, so.width * s);
+      o.width = so.width * s;
     } else if (o.type === 'text') {
-      o.fontSize = Math.max(8, so.fontSize * s);
+      o.fontSize = so.fontSize * s;
       o.x = ax + (so.x - ax) * s; o.y = ay + (so.y - ay) * s;
     } else {
-      o.w = Math.max(12, so.w * s); o.h = Math.max(12, so.h * s);
-      if (o.type === 'sticky') o.fontSize = clamp(so.fontSize * s, 10, 72);
+      o.w = so.w * s; o.h = so.h * s;
+      if (o.type === 'sticky') o.fontSize = so.fontSize * s;
       o.x = ax + (so.x - ax) * s; o.y = ay + (so.y - ay) * s;
     }
   });
+  if (!resized.every(hasValidGeometry)) return;
+  if (!a.snapped) { pushUndo(); a.snapped = true; }
+  resized.forEach((o, idx) => Object.assign(a.objects[idx], o));
   needsRender = true;
 }
 
@@ -1436,23 +1590,13 @@ function doRotate(w, e, a) {
     // Snap to 15 degrees (Math.PI / 12)
     const step = Math.PI / 12;
     dAngle = Math.round(dAngle / step) * step;
-    a.snappedShift = true;
-  } else {
-    a.snappedShift = false;
   }
 
-  if (!a.snapped) {
-    if (Math.abs(dAngle) < 0.02) return;
-    pushUndo();
-    a.snapped = true;
-  }
-
-  a.deltaAngle = dAngle;
-  a.deg = Math.round((dAngle * 180 / Math.PI) % 360);
+  if (!a.snapped && Math.abs(dAngle) < 0.02) return;
 
   const cos = Math.cos(dAngle), sin = Math.sin(dAngle);
-
-  a.objects.forEach((o, idx) => {
+  const rotated = a.sos.map(o => ({ ...o }));
+  rotated.forEach((o, idx) => {
     const so = a.sos[idx];
     if (o.type === 'stroke') {
       o.points = so.points.map(p => {
@@ -1480,7 +1624,7 @@ function doRotate(w, e, a) {
       o.x1 = ncx + sw / 2;
       o.y0 = ncy - sh / 2;
       o.y1 = ncy + sh / 2;
-      o.angle = (so.angle || 0) + dAngle;
+      o.angle = ((so.angle || 0) + dAngle) % (Math.PI * 2);
     } else if (o.type === 'text') {
       const m = textMetrics(so);
       const scx = so.x + m.w / 2, scy = so.y + m.h / 2;
@@ -1489,7 +1633,7 @@ function doRotate(w, e, a) {
       const ncy = cy + dx * sin + dy * cos;
       o.x = ncx - m.w / 2;
       o.y = ncy - m.h / 2;
-      o.angle = (so.angle || 0) + dAngle;
+      o.angle = ((so.angle || 0) + dAngle) % (Math.PI * 2);
     } else { // image, sticky
       const scx = so.x + so.w / 2, scy = so.y + so.h / 2;
       const dx = scx - cx, dy = scy - cy;
@@ -1497,14 +1641,20 @@ function doRotate(w, e, a) {
       const ncy = cy + dx * sin + dy * cos;
       o.x = ncx - so.w / 2;
       o.y = ncy - so.h / 2;
-      o.angle = (so.angle || 0) + dAngle;
+      o.angle = ((so.angle || 0) + dAngle) % (Math.PI * 2);
     }
   });
-
+  if (!rotated.every(hasValidGeometry)) return;
+  if (!a.snapped) { pushUndo(); a.snapped = true; }
+  rotated.forEach((o, idx) => Object.assign(a.objects[idx], o));
+  a.snappedShift = !!e?.shiftKey;
+  a.deltaAngle = dAngle;
+  a.deg = Math.round((dAngle * 180 / Math.PI) % 360);
   needsRender = true;
 }
 
 function deleteSelection() {
+  finishGesture({ cancel: true });
   if (!state.selectedIds.size) return;
   commitEditor();
   pushUndo();
@@ -1512,27 +1662,34 @@ function deleteSelection() {
     removeObject(id);
   }
   state.selectedIds.clear();
+  resetNudgeGroup();
+  refreshContextUI();
   scheduleThumb();
   needsRender = true;
 }
 
 function duplicateSelection() {
+  finishGesture({ cancel: true });
   const selected = getSelectedObjects();
   if (!selected.length) return;
   commitEditor();
+  const offset = constrainTranslation(selected, 24, 24);
   const clones = selected.map(o => {
     const c = cloneObj(o);
-    translateObj(c, 24, 24);
+    translateObj(c, offset.dx, offset.dy);
     return c;
   });
   pushUndo();
   clones.forEach(c => page().objects.push(c));
   state.selectedIds = new Set(clones.map(c => c.id));
+  resetNudgeGroup();
+  refreshContextUI();
   scheduleThumb();
   needsRender = true;
 }
 
 function bringSelToFront() {
+  finishGesture({ cancel: true });
   const selected = getSelectedObjects();
   if (!selected.length) return;
   const arr = page().objects;
@@ -1547,6 +1704,7 @@ function bringSelToFront() {
 }
 
 function sendSelToBack() {
+  finishGesture({ cancel: true });
   const selected = getSelectedObjects();
   if (!selected.length) return;
   const arr = page().objects;
@@ -1561,13 +1719,25 @@ function sendSelToBack() {
   needsRender = true;
 }
 
-let lastNudge = 0;
+let nudgeGroup = null;
+function resetNudgeGroup() {
+  nudgeGroup = null;
+}
+
 function nudge(dx, dy) {
   const selected = getSelectedObjects();
   if (!selected.length) return;
+  ({ dx, dy } = constrainTranslation(selected, dx, dy));
+  if (!dx && !dy) return;
+  const p = page();
   const now = performance.now();
-  if (now - lastNudge > 700) pushUndo();
-  lastNudge = now;
+  const ids = JSON.stringify(selected.map(o => o.id).sort());
+  const latestUndo = p.undo[p.undo.length - 1];
+  if (!nudgeGroup || nudgeGroup.pageId !== p.id || nudgeGroup.ids !== ids ||
+      now - nudgeGroup.time > 700 || nudgeGroup.entry !== latestUndo) {
+    pushUndo(p);
+  }
+  nudgeGroup = { pageId: p.id, ids, time: now, entry: p.undo[p.undo.length - 1] };
   for (const o of selected) {
     translateObj(o, dx, dy);
   }
@@ -1587,12 +1757,14 @@ function openEditor(o, kind, isNew = false) {
   commitEditor();
   editing = {
     obj: o,
+    pageId: page().id,
     kind,
     isNew,
     original: kind === 'text' ? (o.lines || []).join('\n') : (o.text || '')
   };
   const ta = $('textEditor');
   ta.value = isNew && kind === 'text' ? '' : editing.original;
+  editing.lastValue = ta.value;
   ta.wrap = kind === 'sticky' ? 'soft' : 'off';
   ta.classList.toggle('sticky-mode', kind === 'sticky');
   if (kind === 'sticky') {
@@ -1637,31 +1809,38 @@ function positionEditor() {
     ta.style.height = (ta.value.split('\n').length * fs * 1.3 + 6) + 'px';
     ta.style.padding = '0 4px';
     ta.style.lineHeight = '1.3';
+    const m = textMetrics({ ...obj, lines: ta.value.split('\n') });
+    ta.style.transformOrigin = `${m.w * v.zoom / 2 + 4}px ${m.h * v.zoom / 2 + 2}px`;
   }
 }
 
 function commitEditor() {
   if (!editing) return;
-  const { obj, kind, isNew, original } = editing;
+  const { obj, kind, isNew, original, pageId } = editing;
+  const target = pages.find(p => p.id === pageId);
   const val = $('textEditor').value;
   editing = null;
   $('textEditor').style.display = 'none';
   $('textEditor').style.transform = 'none';
+  if (!target) { needsRender = true; return; }
 
   if (kind === 'text') {
     if (!val.trim()) {
-      if (!isNew) { pushUndo(); removeObject(obj.id); state.selectedIds.delete(obj.id); }
+      if (!isNew) { pushUndo(target); target.objects = target.objects.filter(o => o.id !== obj.id); state.selectedIds.delete(obj.id); }
     } else {
       const lines = val.split('\n');
-      if (isNew) { pushUndo(); obj.lines = lines; page().objects.push(obj); }
-      else if (val !== original) { pushUndo(); obj.lines = lines; }
-      state.selectedIds = new Set([obj.id]);
+      if (isNew) { pushUndo(target); obj.lines = lines; target.objects.push(obj); }
+      else if (val !== original) { pushUndo(target); obj.lines = lines; }
+      if (target === page()) state.selectedIds = new Set([obj.id]);
     }
   } else {
     obj._wrap = null;
-    if (val !== original) { pushUndo(); obj.text = val; }
+    if (val !== original) { pushUndo(target); obj.text = val; }
   }
-  scheduleThumb();
+  target.thumbDirty = true;
+  scheduleSave();
+  resetNudgeGroup();
+  refreshContextUI();
   needsRender = true;
 }
 
@@ -1670,6 +1849,7 @@ function createStickyFrom(a) {
   let w = Math.abs(a.x1 - a.x0), h = Math.abs(a.y1 - a.y0);
   if (!a.moved) { w = 180; h = 180; x = a.x0 - w / 2; y = a.y0 - h / 2; }
   w = clamp(w, 90, 4000); h = clamp(h, 90, 4000);
+  x = clamp(x, -1e9, 1e9); y = clamp(y, -1e9, 1e9);
   const o = {
     id: uid(),
     type: 'sticky',
@@ -1681,6 +1861,8 @@ function createStickyFrom(a) {
   pushUndo();
   page().objects.push(o);
   state.selectedIds = new Set([o.id]);
+  resetNudgeGroup();
+  refreshContextUI();
   scheduleThumb();
   openEditor(o, 'sticky', true);
 }
@@ -1689,17 +1871,56 @@ function createStickyFrom(a) {
    9. HISTORY (Undo / Redo for objects and deleted pages)
    ================================================================ */
 const stripCache = o => { const c = { ...o }; delete c._wrap; return c; };
-const snapshot = () => JSON.parse(JSON.stringify(page().objects.map(stripCache)));
+const snapshot = (p = page()) => JSON.parse(JSON.stringify(p.objects.map(stripCache)));
+const deletedPagesRedoHistory = []; // entries match deletedPagesHistory
+let historyOrder = 0;
+const nextHistoryOrder = () => ++historyOrder;
 
-function pushUndo() {
-  const p = page();
-  p.undo.push({ objects: snapshot(), time: Date.now() });
-  if (p.undo.length > HIST_MAX) p.undo.shift();
+function retainHistory(stack, entry) {
+  stack.push(entry);
+  if (stack.length > HIST_MAX) stack.shift();
+}
+
+function historySnapshot(p) {
+  return { objects: snapshot(p), bg: p.bg, time: nextHistoryOrder() };
+}
+
+function resetPageHistory() {
+  deletedPagesHistory.length = 0;
+  deletedPagesRedoHistory.length = 0;
+  pages.forEach(p => { p.undo.length = 0; p.redo.length = 0; });
+  historyOrder = 0;
+  resetNudgeGroup();
+}
+
+function pushUndo(p = page()) {
+  resetNudgeGroup();
+  retainHistory(p.undo, historySnapshot(p));
   p.redo.length = 0;
+  deletedPagesRedoHistory.length = 0;
   updateHistoryUI();
 }
 
+function preparePageAction() {
+  finishGesture({ cancel: true });
+  commitEditor();
+  resetNudgeGroup();
+}
+
+function applyHistorySnapshot(p, entry) {
+  p.objects = Array.isArray(entry) ? entry : entry.objects;
+  if (entry.bg) p.bg = entry.bg;
+  p.thumbDirty = true;
+  state.selectedIds.clear();
+  syncBgSeg();
+  updateHistoryUI();
+  if (typeof refreshContextUI === 'function') refreshContextUI();
+  scheduleSave();
+  needsRender = true;
+}
+
 function undo() {
+  preparePageAction();
   const p = page();
   const lastUndo = p.undo.length ? p.undo[p.undo.length - 1] : null;
   const lastDel = deletedPagesHistory.length ? deletedPagesHistory[deletedPagesHistory.length - 1] : null;
@@ -1707,103 +1928,121 @@ function undo() {
   const undoTime = lastUndo ? (lastUndo.time || 0) : -1;
   const delTime = lastDel ? (lastDel.time || 0) : -1;
 
-  // Restore deleted page if it is newer than the last object undo on the current page, or if active page has no undo history
+  // Page deletions and page edits share a monotonic order, including same-tick actions.
   if (lastDel && (delTime >= undoTime || !lastUndo)) {
-    const { page: restoredPage, index } = deletedPagesHistory.pop();
+    const entry = deletedPagesHistory.pop();
+    const { page: restoredPage, index } = entry;
     const targetIndex = clamp(index, 0, pages.length);
     pages.splice(targetIndex, 0, restoredPage);
-    state.pageIndex = targetIndex;
-    state.selectedIds.clear();
-    rebuildStrip();
-    syncBgSeg();
-    updateZoomLabel();
-    updateHistoryUI();
-    scheduleSave();
-    needsRender = true;
+    retainHistory(deletedPagesRedoHistory, { ...entry, index: targetIndex, time: nextHistoryOrder() });
+    activatePage(targetIndex);
     toast(`Page ${targetIndex + 1} restored`);
     return;
   }
 
   if (lastUndo) {
     const entry = p.undo.pop();
-    p.redo.push({ objects: snapshot(), time: Date.now() });
-    p.objects = Array.isArray(entry) ? entry : entry.objects;
-    state.selectedIds.clear();
-    updateHistoryUI();
-    scheduleThumb();
-    needsRender = true;
+    retainHistory(p.redo, historySnapshot(p));
+    applyHistorySnapshot(p, entry);
     toast('Undo');
     return;
   }
 }
 
 function redo() {
+  preparePageAction();
   const p = page();
-  if (!p.redo.length) return;
+  const lastRedo = p.redo[p.redo.length - 1];
+  const lastDel = deletedPagesRedoHistory[deletedPagesRedoHistory.length - 1];
+  if (lastDel && (!lastRedo || lastDel.time > lastRedo.time)) {
+    const entry = deletedPagesRedoHistory.pop();
+    const index = pages.findIndex(item => item.id === entry.page.id);
+    if (index < 0 || pages.length < 2) { updateHistoryUI(); return; }
+    const activePageId = p.id === entry.page.id ? entry.activePageId : p.id;
+    pages.splice(index, 1);
+    retainHistory(deletedPagesHistory, { ...entry, index, time: nextHistoryOrder() });
+    const activeIndex = pages.findIndex(item => item.id === activePageId);
+    activatePage(activeIndex >= 0 ? activeIndex : Math.min(index, pages.length - 1));
+    toast('Page deletion redone — Ctrl+Z to restore');
+    return;
+  }
+  if (!lastRedo) return;
   const entry = p.redo.pop();
-  p.undo.push({ objects: snapshot(), time: Date.now() });
-  p.objects = Array.isArray(entry) ? entry : entry.objects;
-  state.selectedIds.clear();
-  updateHistoryUI();
-  scheduleThumb();
-  needsRender = true;
+  retainHistory(p.undo, historySnapshot(p));
+  applyHistorySnapshot(p, entry);
   toast('Redo');
 }
 
 function updateHistoryUI() {
-  $('undoBtn').disabled = (!page().undo.length && !deletedPagesHistory.length);
-  $('redoBtn').disabled = !page().redo.length;
+  const p = page();
+  $('undoBtn').disabled = (!p || !p.undo.length) && !deletedPagesHistory.length;
+  $('redoBtn').disabled = (!p || !p.redo.length) && !deletedPagesRedoHistory.length;
 }
 
 /* ================================================================
    10. IMAGES & CLIPBOARD
    ================================================================ */
-function importImageFile(file, at) {
+function importImageFile(file, at, targetPageId = page().id, generation = boardGeneration) {
   if (!file || !file.type || !file.type.startsWith('image/')) {
     toast('That file is not an image');
     return;
   }
   const rd = new FileReader();
-  rd.onload = () => finalizeImageSrc(rd.result, at);
+  rd.onload = () => finalizeImageSrc(rd.result, at, targetPageId, generation);
   rd.onerror = () => toast('Could not read that image');
   rd.readAsDataURL(file);
 }
 
-function finalizeImageSrc(src, at) {
+function finalizeImageSrc(src, at, targetPageId = page().id, generation = boardGeneration) {
   const im = new Image();
   im.onload = () => {
+    if (generation !== boardGeneration || !pages.some(p => p.id === targetPageId)) {
+      toast('Image import canceled because its destination page was removed');
+      return;
+    }
     let w = im.naturalWidth, h = im.naturalHeight, out = src;
+    if (!w || !h) { toast('Could not load that image'); return; }
     const MAXPX = 1600;
     if (Math.max(w, h) > MAXPX) {
       const f = MAXPX / Math.max(w, h);
       const t = document.createElement('canvas');
-      t.width = Math.round(w * f);
-      t.height = Math.round(h * f);
-      t.getContext('2d').drawImage(im, 0, 0, t.width, t.height);
-      out = t.toDataURL('image/png');
-      if (out.length > 1400000) out = t.toDataURL('image/jpeg', 0.9);
+      t.width = Math.max(1, Math.round(w * f));
+      t.height = Math.max(1, Math.round(h * f));
+      try {
+        const imageContext = t.getContext('2d');
+        if (!imageContext) throw new Error('Canvas unavailable');
+        imageContext.drawImage(im, 0, 0, t.width, t.height);
+        out = t.toDataURL('image/png');
+      } catch (_) { toast('Could not process that image'); return; }
       w = t.width;
       h = t.height;
     }
-    registerAndPlace(im, out, w, h, at);
+    registerAndPlace(im, out, w, h, at, targetPageId, generation);
   };
   im.onerror = () => toast('Could not load that image');
   im.src = src;
 }
 
-function registerAndPlace(el, src, w, h, at) {
+function registerAndPlace(el, src, w, h, at, targetPageId = page().id, generation = boardGeneration) {
+  const target = pages.find(p => p.id === targetPageId);
+  if (!target || generation !== boardGeneration) return;
+  if (target === page() && (action || editing)) {
+    setTimeout(() => registerAndPlace(el, src, w, h, at, targetPageId, generation), 200);
+    return;
+  }
   const id = uid();
-  IMG.set(id, { el, src, w, h });
-  const v = page().view;
+  IMG.set(id, { el, src, w, h, status: 'ready' });
+  const v = target.view;
   const maxW = (VW / v.zoom) * 0.55, maxH = (VH / v.zoom) * 0.55;
   const f = Math.min(maxW / w, maxH / h, 1);
-  const dw = w * f, dh = h * f;
+  const dw = Math.max(0.01, w * f), dh = Math.max(0.01, h * f);
   const c = at || { x: (VW / 2 - v.panX) / v.zoom, y: (VH / 2 - v.panY) / v.zoom };
-  const o = { id: uid(), type: 'image', imgId: id, x: c.x - dw / 2, y: c.y - dh / 2, w: dw, h: dh };
-  pushUndo();
-  page().objects.push(o);
-  state.selectedIds = new Set([o.id]);
-  scheduleThumb();
+  const o = { id: uid(), type: 'image', imgId: id, x: clamp(c.x - dw / 2, -1e9, 1e9), y: clamp(c.y - dh / 2, -1e9, 1e9), w: dw, h: dh };
+  pushUndo(target);
+  target.objects.push(o);
+  if (target === page()) state.selectedIds = new Set([o.id]);
+  refreshContextUI();
+  scheduleThumb(target);
   needsRender = true;
   toast('Image added');
 }
@@ -1830,20 +2069,59 @@ window.addEventListener('drop', e => {
 
 /* Universal Copy / Paste Handlers */
 window.addEventListener('copy', e => {
-  if (editing || (e.target && e.target.tagName === 'TEXTAREA')) return;
+  if (editing || (e.target && ['TEXTAREA', 'INPUT'].includes(e.target.tagName)) || e.target?.isContentEditable) return;
   const selected = getSelectedObjects();
   if (selected.length) {
     clipObjects = selected.map(cloneObj);
-    const payload = JSON.stringify({ type: 'brightboard-clip', objects: clipObjects });
+    const used = new Set(selected.filter(o => o.type === 'image').map(o => o.imgId));
+    clipImages = [...IMG].filter(([id]) => used.has(id)).map(([id, rec]) => [id, rec.src]);
+    const payload = JSON.stringify({ type: 'brightboard-clip', v: 1, objects: clipObjects.map(stripCache), images: clipImages });
     if (e.clipboardData) {
       e.clipboardData.setData('text/plain', payload);
       e.preventDefault();
     }
+    toast(`Copied ${selected.length} object${selected.length > 1 ? 's' : ''}`);
   }
 });
 
+function pasteBoardObjects(data) {
+  if (!data || data.type !== 'brightboard-clip' || (data.v !== undefined && data.v !== 1) || !Array.isArray(data.objects) || !data.objects.length || data.objects.length > 50000) throw new Error('Invalid clipboard objects');
+  const assets = validateImageAssets(data.images || []), ids = new Set();
+  data.objects.forEach(o => {
+    if (o?.type === 'image' && !assets.has(o.imgId) && IMG.has(o.imgId)) assets.set(o.imgId, IMG.get(o.imgId).src);
+  });
+  let points = 0;
+  const objects = data.objects.map(o => {
+    const obj = validateBoardObject(o, assets, ids);
+    points += obj.points?.length || 0;
+    if (points > 500000) throw new Error('Clipboard has too many points');
+    return obj;
+  });
+  const remapped = new Map();
+  objects.filter(o => o.type === 'image').forEach(o => {
+    if (!remapped.has(o.imgId)) remapped.set(o.imgId, uid());
+  });
+  const offset = constrainTranslation(objects, 24, 24);
+  const clones = objects.map(o => {
+    const c = cloneObj(o);
+    if (c.type === 'image') c.imgId = remapped.get(c.imgId);
+    translateObj(c, offset.dx, offset.dy);
+    return c;
+  });
+  finishGesture({ cancel: true });
+  commitEditor();
+  pushUndo();
+  remapped.forEach((newId, oldId) => registerImageSource(newId, assets.get(oldId)));
+  page().objects.push(...clones);
+  state.selectedIds = new Set(clones.map(c => c.id));
+  refreshContextUI();
+  scheduleThumb();
+  needsRender = true;
+  toast(`${clones.length} object${clones.length > 1 ? 's' : ''} pasted`);
+}
+
 window.addEventListener('paste', e => {
-  if (editing || (e.target && e.target.tagName === 'TEXTAREA')) return;
+  if (editing || (e.target && ['TEXTAREA', 'INPUT'].includes(e.target.tagName)) || e.target?.isContentEditable) return;
   const items = (e.clipboardData && e.clipboardData.items) || [];
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
@@ -1860,19 +2138,10 @@ window.addEventListener('paste', e => {
   if (rawText && rawText.trim()) {
     try {
       const parsed = JSON.parse(rawText);
-      if (parsed && parsed.type === 'brightboard-clip' && Array.isArray(parsed.objects) && parsed.objects.length) {
+      if (parsed && parsed.type === 'brightboard-clip') {
         e.preventDefault();
-        const clones = parsed.objects.map(o => {
-          const c = cloneObj(o);
-          translateObj(c, 24, 24);
-          return c;
-        });
-        pushUndo();
-        clones.forEach(c => page().objects.push(c));
-        state.selectedIds = new Set(clones.map(c => c.id));
-        scheduleThumb();
-        needsRender = true;
-        toast(`${clones.length} object${clones.length > 1 ? 's' : ''} pasted`);
+        try { pasteBoardObjects(parsed); }
+        catch (err) { toast(`Could not paste objects: ${err.message}`); }
         return;
       }
     } catch (_) {}
@@ -1881,17 +2150,8 @@ window.addEventListener('paste', e => {
   // If internal objects were copied within current session and no external text on clipboard
   if (!rawText && clipObjects && clipObjects.length) {
     e.preventDefault();
-    const clones = clipObjects.map(o => {
-      const c = cloneObj(o);
-      translateObj(c, 24, 24);
-      return c;
-    });
-    pushUndo();
-    clones.forEach(c => page().objects.push(c));
-    state.selectedIds = new Set(clones.map(c => c.id));
-    scheduleThumb();
-    needsRender = true;
-    toast(`${clones.length} object${clones.length > 1 ? 's' : ''} pasted`);
+    try { pasteBoardObjects({ type: 'brightboard-clip', objects: clipObjects, images: clipImages }); }
+    catch (err) { toast(`Could not paste objects: ${err.message}`); }
     return;
   }
 
@@ -1899,6 +2159,8 @@ window.addEventListener('paste', e => {
   const text = rawText;
   if (text && text.trim()) {
     e.preventDefault();
+    if (!isValidTextContent(text)) { toast('Clipboard text is too large'); return; }
+    finishGesture({ cancel: true });
     const v = page().view;
     const cx = (VW / 2 - v.panX) / v.zoom;
     const cy = (VH / 2 - v.panY) / v.zoom;
@@ -1906,8 +2168,8 @@ window.addEventListener('paste', e => {
     const o = {
       id: uid(),
       type: 'text',
-      x: cx - 100,
-      y: cy - 20,
+      x: clamp(cx - 100, -1e9, 1e9),
+      y: clamp(cy - 20, -1e9, 1e9),
       color: state.color,
       fontSize: state.fontSize,
       lines
@@ -1915,6 +2177,7 @@ window.addEventListener('paste', e => {
     pushUndo();
     page().objects.push(o);
     state.selectedIds = new Set([o.id]);
+    refreshContextUI();
     scheduleThumb();
     needsRender = true;
     toast('Text pasted');
@@ -1925,30 +2188,24 @@ window.addEventListener('paste', e => {
    11. PNG EXPORT & JSON BACKUP / RESTORE
    ================================================================ */
 function exportPNG() {
+  finishGesture({ cancel: true });
   commitEditor();
   const p = page();
   const b = contentBounds(p.objects);
   const pad = 48;
   let W, H, view;
   if (b) {
-    let sc = 2;
-    const MAXS = 8000;
+    const MAXS = 8000, MAXPIXELS = 16000000;
     const needW = b.w + pad * 2, needH = b.h + pad * 2;
-    if (Math.max(needW, needH) * sc > MAXS) sc = Math.max(0.3, MAXS / Math.max(needW, needH));
-    W = Math.ceil(needW * sc);
-    H = Math.ceil(needH * sc);
+    const sc = Math.min(2, MAXS / needW, MAXS / needH, Math.sqrt(MAXPIXELS / (needW * needH)));
+    W = Math.max(1, Math.floor(needW * sc));
+    H = Math.max(1, Math.floor(needH * sc));
     view = { zoom: sc, panX: (pad - b.x) * sc, panY: (pad - b.y) * sc };
   } else {
     W = 1280;
     H = 800;
     view = { zoom: 1, panX: 0, panY: 0 };
   }
-  const oc = document.createElement('canvas');
-  oc.width = W;
-  oc.height = H;
-  const octx = oc.getContext('2d');
-  paintBoard(octx, W, H, view, p.bg, p.objects, null);
-
   const fname = `brightboard-p${state.pageIndex + 1}-${getTimestamp()}.png`;
   const deliver = url => {
     const a = document.createElement('a');
@@ -1961,16 +2218,34 @@ function exportPNG() {
     toast('PNG downloaded');
   };
   try {
+    if (p.objects.some(o => o.type === 'image' && (!IMG.has(o.imgId) || IMG.get(o.imgId).status === 'error'))) {
+      toast('An image could not load — export JSON to keep its source');
+      return;
+    }
+    if (p.objects.some(o => o.type === 'image' && IMG.get(o.imgId)?.status === 'loading')) {
+      toast('Wait for images to finish loading before exporting PNG');
+      return;
+    }
+    const oc = document.createElement('canvas');
+    oc.width = W;
+    oc.height = H;
+    const octx = oc.getContext('2d');
+    if (!octx) throw new Error('Canvas unavailable');
+    paintBoard(octx, W, H, view, p.bg, p.objects, null);
     oc.toBlob(blob => {
-      if (blob) deliver(URL.createObjectURL(blob));
-      else deliver(oc.toDataURL('image/png'));
+      try {
+        if (!blob) throw new Error('PNG encoding failed');
+        deliver(URL.createObjectURL(blob));
+      } catch (_) { toast('Could not export PNG — try a smaller page or export JSON'); }
     }, 'image/png');
   } catch (err) {
-    toast('Export blocked — a canvas element was tainted');
+    toast('Could not export PNG — try a smaller page or export JSON');
   }
 }
 
 function exportJSONBackup() {
+  finishGesture({ cancel: true });
+  commitEditor();
   const data = serializeBoard();
   data.exportedAt = new Date().toISOString();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1982,33 +2257,32 @@ function exportJSONBackup() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  $('backupModal').classList.remove('show');
+  closeDialog('backupModal');
   toast('Notebook JSON exported');
 }
 
 function restoreFromJSONFile(file) {
   if (!file) return;
+  if (file.size > 64000000) { toast('Backup file is too large'); return; }
   const reader = new FileReader();
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
       if (data && Array.isArray(data.pages) && data.pages.length) {
         restoreBoard(data);
-        rebuildStrip();
-        syncBgSeg();
-        updateZoomLabel();
-        updateHistoryUI();
+        activatePage(state.pageIndex);
         scheduleSave();
         needsRender = true;
-        $('backupModal').classList.remove('show');
+        closeDialog('backupModal');
         toast('Notebook restored from JSON');
       } else {
         toast('Invalid notebook backup file');
       }
-    } catch (_) {
-      toast('Could not parse backup file');
+    } catch (err) {
+      toast(`Could not restore backup: ${err.message}`);
     }
   };
+  reader.onerror = () => toast('Could not read backup file');
   reader.readAsText(file);
 }
 
@@ -2017,10 +2291,21 @@ function restoreFromJSONFile(file) {
    ================================================================ */
 function rebuildStrip() {
   const strip = $('pagestrip');
+  const focused = document.activeElement;
+  const preserveFocus = strip.contains(focused);
+  const focusedPageId = focused && (focused.dataset.pageId || focused.parentElement?.dataset.pageId);
+  const focusDelete = focused && focused.classList.contains('pdel');
+  const focusAdd = focused && focused.id === 'addPage';
   strip.innerHTML = '';
   pages.forEach((p, i) => {
     const d = document.createElement('div');
     d.className = 'pthumb' + (i === state.pageIndex ? ' active' : '');
+    d.dataset.pageId = p.id;
+    d.tabIndex = 0;
+    d.setAttribute('role', 'button');
+    d.setAttribute('aria-label', `Switch to page ${i + 1}`);
+    d.setAttribute('aria-current', i === state.pageIndex ? 'page' : 'false');
+    d.title = `Page ${i + 1}`;
     if (!p.thumbCanvas) {
       p.thumbCanvas = document.createElement('canvas');
       p.thumbCanvas.width = TH_W * 2;
@@ -2034,51 +2319,73 @@ function rebuildStrip() {
 
     // Always show cross button (even when 1 page is open)
     const del = document.createElement('button');
+    del.type = 'button';
     del.className = 'pdel';
     del.title = pages.length === 1 ? 'Clear this page' : 'Delete page';
+    del.setAttribute('aria-label', pages.length === 1 ? 'Clear page 1' : `Delete page ${i + 1}`);
     del.innerHTML = X_SVG;
     del.onclick = ev => {
       ev.stopPropagation();
       deleteOrClearPage(i);
     };
+    del.onkeydown = ev => ev.stopPropagation();
     d.appendChild(del);
 
     d.onclick = () => switchPage(i);
+    d.onkeydown = ev => {
+      if (ev.target !== d || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      switchPage(i);
+    };
     strip.appendChild(d);
   });
   const add = document.createElement('button');
+  add.type = 'button';
   add.id = 'addPage';
   add.title = 'Add new page';
+  add.setAttribute('aria-label', 'Add new page');
   add.innerHTML = PLUS_SVG;
   add.onclick = addPage;
   strip.appendChild(add);
+  if (preserveFocus) {
+    const thumb = Array.from(strip.children).find(d => d.dataset.pageId === focusedPageId) || strip.children[state.pageIndex];
+    const target = focusAdd ? add : focusDelete && thumb?.dataset.pageId === focusedPageId ? thumb.querySelector('.pdel') : thumb;
+    target?.focus();
+  }
+}
+
+function activatePage(i) {
+  if (i < 0 || i >= pages.length) return;
+  state.pageIndex = i;
+  state.selectedIds.clear();
+  resetNudgeGroup();
+  syncBgSeg();
+  updateZoomLabel();
+  updateHistoryUI();
+  if (typeof refreshContextUI === 'function') refreshContextUI();
+  rebuildStrip();
+  scheduleSave();
+  needsRender = true;
 }
 
 function switchPage(i) {
   if (i === state.pageIndex || i < 0 || i >= pages.length) return;
-  commitEditor();
-  state.pageIndex = i;
-  state.selectedIds.clear();
-  syncBgSeg();
-  updateZoomLabel();
-  updateHistoryUI();
-  rebuildStrip();
-  needsRender = true;
+  preparePageAction();
+  activatePage(i);
 }
 
 function addPage() {
-  commitEditor();
+  preparePageAction();
+  deletedPagesRedoHistory.length = 0;
   pages.push(newPage(page().bg));
-  state.pageIndex = pages.length - 1;
-  state.selectedIds.clear();
-  rebuildStrip();
-  scheduleSave();
-  needsRender = true;
+  activatePage(pages.length - 1);
   toast(`Page ${pages.length} created`);
 }
 
 function deleteOrClearPage(i) {
-  commitEditor();
+  if (i < 0 || i >= pages.length) return;
+  preparePageAction();
   if (pages.length === 1) {
     // Only 1 page open: clear all objects on it immediately without confirmation
     const cur = pages[0];
@@ -2094,22 +2401,20 @@ function deleteOrClearPage(i) {
     }
     return;
   }
-  // Multiple pages: delete the page immediately without confirmation and save to deletedPagesHistory for Ctrl+Z
+  // Preserve the active page when an earlier, inactive thumbnail is deleted.
+  const activePageId = page().id;
   const removed = pages.splice(i, 1)[0];
-  deletedPagesHistory.push({ page: removed, index: i, time: Date.now() });
-  if (state.pageIndex >= pages.length) state.pageIndex = pages.length - 1;
-  state.selectedIds.clear();
-  rebuildStrip();
-  syncBgSeg();
-  updateZoomLabel();
-  updateHistoryUI();
-  scheduleSave();
-  needsRender = true;
+  deletedPagesRedoHistory.length = 0;
+  pages.forEach(p => p.redo.length = 0);
+  removed.redo.length = 0;
+  retainHistory(deletedPagesHistory, { page: removed, index: i, activePageId, time: nextHistoryOrder() });
+  const activeIndex = pages.findIndex(p => p.id === activePageId);
+  activatePage(activeIndex >= 0 ? activeIndex : Math.min(i, pages.length - 1));
   toast('Page deleted — Ctrl+Z to restore');
 }
 
 function clearCurrentPage() {
-  commitEditor();
+  preparePageAction();
   const p = page();
   if (!p.objects.length) { toast('Page is already empty'); return; }
   pushUndo();
@@ -2139,8 +2444,8 @@ function renderThumb(p) {
   paintBoard(c, TH_W, TH_H, view, p.bg, p.objects, null);
 }
 
-function scheduleThumb() {
-  page().thumbDirty = true;
+function scheduleThumb(target = page()) {
+  target.thumbDirty = true;
   scheduleSave();
 }
 
@@ -2157,71 +2462,269 @@ function thumbSweep() {
    13. AUTOSAVE & STORAGE GARBAGE COLLECTION
    ================================================================ */
 let saveTimer = null, saveBroken = false;
+let recoveryRaw = null, recoveryProtected = false;
+
+function preserveOriginalSave(raw) {
+  recoveryRaw = raw;
+  recoveryProtected = false;
+  try {
+    const previous = localStorage.getItem(RECOVERY_KEY);
+    if (!previous || previous === raw) {
+      localStorage.setItem(RECOVERY_KEY, raw);
+      recoveryProtected = true;
+    }
+  } catch (_) {}
+  updateRecoveryUI();
+  setSaveStatus(recoveryProtected ? 'Original saved data retained for recovery' : 'Recovery needed — download original data', !recoveryProtected);
+}
+
+function updateRecoveryUI() {
+  const button = $('downloadRecoveryBtn');
+  if (button) button.hidden = !recoveryRaw;
+}
+
+function downloadRecoveryBackup() {
+  if (!recoveryRaw) return;
+  const url = URL.createObjectURL(new Blob([recoveryRaw], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `brightboard-recovery-${getTimestamp()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  recoveryProtected = true;
+  scheduleSave();
+  toast('Original notebook data downloaded for recovery');
+}
+$('downloadRecoveryBtn').onclick = downloadRecoveryBackup;
 
 function pruneUnusedImages() {
   const usedImgIds = new Set();
-  for (const p of pages) {
-    for (const o of p.objects) {
+  const scan = objects => {
+    for (const o of objects || []) {
       if (o.type === 'image' && o.imgId) usedImgIds.add(o.imgId);
     }
-  }
+  };
+  const scanPage = p => {
+    scan(p.objects);
+    [...p.undo, ...p.redo].forEach(entry => scan(Array.isArray(entry) ? entry : entry.objects));
+  };
+  pages.forEach(scanPage);
+  deletedPagesHistory.forEach(entry => scanPage(entry.page));
+  deletedPagesRedoHistory.forEach(entry => scanPage(entry.page));
+  scan(clipObjects);
   for (const id of IMG.keys()) {
     if (!usedImgIds.has(id)) IMG.delete(id);
   }
 }
 
+function persistedObjects(p) {
+  const objects = p.objects.map(stripCache);
+  if (!editing || editing.pageId !== p.id) return objects;
+  const draft = stripCache(editing.obj), value = $('textEditor').value;
+  const index = objects.findIndex(o => o.id === draft.id);
+  if (editing.kind === 'text') {
+    if (!value.trim()) { if (index >= 0) objects.splice(index, 1); return objects; }
+    draft.lines = value.split('\n');
+  } else draft.text = value;
+  if (index >= 0) objects[index] = draft;
+  else objects.push(draft);
+  return objects;
+}
+
 function serializeBoard() {
-  pruneUnusedImages();
+  const serializedPages = pages.map(p => ({ id: p.id, bg: p.bg, view: { ...p.view }, objects: persistedObjects(p) }));
+  const used = new Set(serializedPages.flatMap(p => p.objects.filter(o => o.type === 'image').map(o => o.imgId)));
   return {
     v: 1,
     appVersion: APP_VERSION,
     pageIndex: state.pageIndex,
-    pages: pages.map(p => ({ bg: p.bg, view: p.view, objects: p.objects.map(stripCache) })),
-    images: [...IMG].map(([id, r]) => [id, r.src]),
+    pages: serializedPages,
+    images: [...IMG].filter(([id]) => used.has(id)).map(([id, r]) => [id, r.src]),
   };
 }
 
 function scheduleSave() {
-  if (saveBroken) return;
   clearTimeout(saveTimer);
+  if (!saveBroken) setSaveStatus('Saving…');
   saveTimer = setTimeout(saveNow, 800);
+}
+
+function setSaveStatus(message, failed = false) {
+  const status = $('saveStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', failed);
 }
 
 function saveNow() {
   clearTimeout(saveTimer);
+  if (recoveryRaw && !recoveryProtected) {
+    setSaveStatus('Recovery needed — download original data', true);
+    return false;
+  }
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(serializeBoard()));
+    pruneUnusedImages();
+    const data = serializeBoard();
+    validateNotebook(data);
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     saveBroken = false;
+    setSaveStatus('Saved');
+    return true;
   } catch (e) {
     if (!saveBroken) {
       saveBroken = true;
-      toast('Autosave paused — board is too large for local storage');
+      toast('Could not save — export a JSON backup to protect your work');
     }
+    setSaveStatus('Save failed — export a backup', true);
+    return false;
   }
 }
 window.addEventListener('beforeunload', saveNow);
+window.addEventListener('pagehide', suspendInteractions);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') suspendInteractions(); });
 
-function restoreBoard(d) {
-  pages.length = 0;
-  deletedPagesHistory.length = 0;
-  d.pages.forEach(pd => {
+function restoreBoard(d, { recoverMissingImages = false } = {}) {
+  const data = validateNotebook(d, { recoverMissingImages });
+  const restoredPages = data.pages.map(pd => {
     const p = newPage(pd.bg || 'grid');
-    p.objects = (pd.objects || []).map(o => { const c = { ...o }; delete c._wrap; return c; });
-    if (pd.view) p.view = { zoom: clamp(pd.view.zoom || 1, 0.2, 5),
-                            panX: pd.view.panX || 0, panY: pd.view.panY || 0 };
-    pages.push(p);
+    p.id = pd.id;
+    p.objects = pd.objects;
+    p.view = pd.view;
+    return p;
   });
-  state.pageIndex = clamp(d.pageIndex | 0, 0, pages.length - 1);
+  finishGesture({ cancel: true });
+  editing = null;
+  $('textEditor').style.display = 'none';
+  resetPageHistory();
+  pages.splice(0, pages.length, ...restoredPages);
+  state.pageIndex = data.pageIndex;
   state.selectedIds.clear();
-  (d.images || []).forEach(([id, src]) => {
-    const el = new Image();
-    el.onload = () => {
-      IMG.set(id, { el, src, w: el.naturalWidth, h: el.naturalHeight });
-      needsRender = true;
-      pages.forEach(p => p.thumbDirty = true);
-    };
-    el.src = src;
+  IMG.clear();
+  boardGeneration++;
+  data.images.forEach(([id, src]) => registerImageSource(id, src));
+  refreshContextUI();
+  needsRender = true;
+  return data.recoveredImages;
+}
+
+function registerImageSource(id, src) {
+  const el = new Image();
+  const rec = { el, src, w: 0, h: 0, status: 'loading' };
+  IMG.set(id, rec);
+  el.onload = () => {
+    if (IMG.get(id) !== rec) return;
+    rec.w = el.naturalWidth; rec.h = el.naturalHeight; rec.status = 'ready';
+    needsRender = true;
+    pages.forEach(p => { p.thumbDirty = true; });
+  };
+  el.onerror = () => {
+    if (IMG.get(id) !== rec) return;
+    rec.status = 'error';
+    toast('An image could not load; its source is retained in your backup');
+    needsRender = true;
+  };
+  el.src = src;
+  return rec;
+}
+
+function validateNotebook(data, { recoverMissingImages = false } = {}) {
+  if (!data || typeof data !== 'object' || (data.v !== undefined && data.v !== 1)) throw new Error('Unsupported notebook format');
+  if (!Array.isArray(data.pages) || !data.pages.length || data.pages.length > 1000) throw new Error('Invalid notebook pages');
+  const assets = validateImageAssets(data.images || []), objectIds = new Set(), pageIds = new Set();
+  let objectCount = 0, pointCount = 0, recoveredImages = 0;
+  const normalized = data.pages.map(pd => {
+    if (!pd || typeof pd !== 'object' || !Array.isArray(pd.objects || [])) throw new Error('Invalid page objects');
+    const objects = (pd.objects || []).map(o => {
+      if (recoverMissingImages && o?.type === 'image' && !assets.has(o.imgId)) {
+        const id = validateId(o.imgId);
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180"><rect width="300" height="180" fill="#FCFAF3"/><rect x="2" y="2" width="296" height="176" fill="none" stroke="#C43C2B" stroke-width="4"/><text x="150" y="85" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#C43C2B">Image source missing</text><text x="150" y="115" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#4A423A">Other notebook contents recovered</text></svg>';
+        assets.set(id, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+        recoveredImages++;
+      }
+      const obj = validateBoardObject(o, assets, objectIds);
+      objectCount++;
+      pointCount += obj.points?.length || 0;
+      if (objectCount > 50000 || pointCount > 500000) throw new Error('Notebook has too many objects or points');
+      return obj;
+    });
+    const bg = pd.bg || 'grid';
+    if (!['blank', 'dots', 'grid', 'ruled'].includes(bg)) throw new Error('Invalid page background');
+    const view = pd.view || { zoom: 1, panX: 0, panY: 0 };
+    const id = pd.id === undefined ? uid() : validateId(pd.id);
+    if (pageIds.has(id)) throw new Error('Duplicate page ID');
+    pageIds.add(id);
+    return { id, bg, objects, view: { zoom: clamp(validNumber(view.zoom ?? 1, 0.001, 100), 0.2, 5), panX: validNumber(view.panX ?? 0), panY: validNumber(view.panY ?? 0) } };
   });
+  const pageIndex = data.pageIndex === undefined ? 0 : validNumber(data.pageIndex, 0, 1000000);
+  return { pages: normalized, pageIndex: clamp(Math.trunc(pageIndex), 0, normalized.length - 1), images: [...assets], recoveredImages };
+}
+
+function validNumber(value, min = -1e9, max = 1e9) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error('Invalid numeric value');
+  return value;
+}
+function isValidTextContent(value, kind = 'text') {
+  return typeof value === 'string' && value.length <= 1000000 && (kind !== 'text' || value.split('\n').length <= 10000);
+}
+function validateId(value) {
+  if (typeof value !== 'string' || !/^[\w-]{1,128}$/.test(value)) throw new Error('Invalid object or image ID');
+  return value;
+}
+function validateImageAssets(images) {
+  if (!Array.isArray(images) || images.length > 50000) throw new Error('Invalid image assets');
+  const assets = new Map(); let total = 0;
+  for (const entry of images) {
+    if (!Array.isArray(entry) || entry.length !== 2) throw new Error('Invalid image asset');
+    const id = validateId(entry[0]), src = entry[1];
+    if (assets.has(id) || typeof src !== 'string' || !/^data:image\/[a-z0-9.+-]+(?:;[a-z0-9=.+-]+)*,/i.test(src) || src.length > 16000000) throw new Error('Invalid image source');
+    total += src.length;
+    if (total > 64000000) throw new Error('Image assets are too large');
+    assets.set(id, src);
+  }
+  return assets;
+}
+function validateBoardObject(o, assets, ids) {
+  if (!o || typeof o !== 'object') throw new Error('Invalid drawing object');
+  const id = validateId(o.id);
+  if (ids.has(id)) throw new Error('Duplicate object ID');
+  ids.add(id);
+  const obj = { id, type: o.type };
+  const number = (key, min, max) => { obj[key] = validNumber(o[key], min, max); };
+  if (o.type !== 'image') {
+    if (typeof o.color !== 'string' || !/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(o.color)) throw new Error('Invalid object color');
+    obj.color = o.color;
+  }
+  if (o.angle !== undefined) obj.angle = validNumber(o.angle, -1e9, 1e9) % (Math.PI * 2);
+  if (o.type === 'stroke') {
+    number('width', 0.01, 1e6);
+    if (o.mode !== 'pen' && o.mode !== 'hi') throw new Error('Invalid stroke mode');
+    obj.mode = o.mode;
+    if (!Array.isArray(o.points) || !o.points.length || o.points.length > 100000) throw new Error('Invalid stroke points');
+    obj.points = o.points.map(p => {
+      if (!p || typeof p !== 'object') throw new Error('Invalid stroke point');
+      return { x: validNumber(p.x), y: validNumber(p.y), w: validNumber(p.w ?? 1, 0.01, 10) };
+    });
+  } else if (['line', 'rect', 'ellipse', 'arrow'].includes(o.type)) {
+    ['x0','y0','x1','y1'].forEach(key => number(key)); number('width', 0.01, 1e6);
+    if (o.fill !== undefined && typeof o.fill !== 'boolean') throw new Error('Invalid shape fill');
+    obj.fill = !!o.fill;
+  } else if (['text', 'sticky', 'image'].includes(o.type)) {
+    number('x'); number('y');
+    if (o.type !== 'text') { number('w', 0.01, 1e9); number('h', 0.01, 1e9); }
+    if (o.type === 'image') {
+      obj.imgId = validateId(o.imgId);
+      if (!assets.has(obj.imgId)) throw new Error('An image source is missing');
+    } else {
+      number('fontSize', 0.01, 10000);
+      if (o.type === 'text') {
+        if (!Array.isArray(o.lines) || !o.lines.length || o.lines.some(ln => typeof ln !== 'string' || ln.includes('\n')) || !isValidTextContent(o.lines.join('\n'))) throw new Error('Invalid text');
+        obj.lines = [...o.lines];
+      } else {
+        if (!isValidTextContent(o.text, 'sticky')) throw new Error('Invalid sticky text');
+        obj.text = o.text;
+      }
+    }
+  } else throw new Error('Unsupported drawing object');
+  return obj;
 }
 
 function invalidateWrapCaches() {
@@ -2231,6 +2734,36 @@ function invalidateWrapCaches() {
 /* ================================================================
    14. UI WIRING & INTERACTION
    ================================================================ */
+const toolSizes = { pen: 4, highlighter: 4, eraser: 4, line: 4, rect: 4, ellipse: 4, arrow: 4 };
+
+function syncToolbarLayout() {
+  const bar = $('topbar');
+  if (bar.getBoundingClientRect && document.documentElement) {
+    document.documentElement.style.setProperty('--toolbar-bottom', (bar.getBoundingClientRect().bottom + 12) + 'px');
+  }
+}
+window.addEventListener('resize', syncToolbarLayout);
+
+function updateSelectedProperty(property, value, predicate = () => true) {
+  if (state.tool !== 'select') return;
+  const selected = getSelectedObjects().filter(o => predicate(o) && o[property] !== undefined && o[property] !== value);
+  if (!selected.length) return;
+  finishGesture({ cancel: true });
+  resetNudgeGroup();
+  pushUndo();
+  selected.forEach(o => { o[property] = value; });
+  scheduleThumb();
+  refreshContextUI();
+}
+
+function chooseColor(col) {
+  if (state.tool === 'select') {
+    updateSelectedProperty('color', col, o => o.type !== 'sticky');
+  } else {
+    setColor(col);
+  }
+}
+
 function buildSwatches() {
   const row = $('swatchRow');
   MARKERS.forEach(col => {
@@ -2239,25 +2772,23 @@ function buildSwatches() {
     b.dataset.col = col;
     b.style.background = col;
     b.title = col;
-    b.onclick = () => {
-      setColor(col);
-      const selected = getSelectedObjects();
-      if (selected.length) {
-        pushUndo();
-        selected.forEach(o => { if (o.color) o.color = col; });
-        scheduleThumb();
-        needsRender = true;
-      }
-    };
+    b.setAttribute('aria-label', `Ink color ${col}`);
+    b.onclick = () => chooseColor(col);
     row.appendChild(b);
   });
 }
 
-function setColor(c) {
-  state.color = c;
+function setColor(c, updateDefault = true) {
+  if (updateDefault) state.color = c;
   document.querySelectorAll('#swatchRow .swatch:not(.custom)')
-    .forEach(s => s.classList.toggle('active', s.dataset.col === c));
-  $('customSw').classList.toggle('active', c === state.custom);
+    .forEach(s => {
+      const active = s.dataset.col === c;
+      s.classList.toggle('active', active);
+      s.setAttribute('aria-pressed', String(active));
+    });
+  $('customSw').classList.toggle('active', !MARKERS.includes(c));
+  $('customColor').value = !MARKERS.includes(c) ? c : (state.custom || c);
+  $('customSw').style.setProperty('--cc', !MARKERS.includes(c) ? c : (state.custom || '#FFFFFF'));
 }
 
 function buildNotePalette() {
@@ -2266,32 +2797,40 @@ function buildNotePalette() {
     b.className = 'nswatch';
     b.dataset.col = col;
     b.style.background = col;
-    b.title = 'Note colour';
+    b.title = `Note color ${col}`;
+    b.setAttribute('aria-label', b.title);
     b.onclick = () => {
-      setNoteColor(col);
-      const selected = getSelectedObjects();
-      if (selected.length) {
-        pushUndo();
-        selected.forEach(o => { if (o.type === 'sticky') o.color = col; });
-        scheduleThumb();
-        needsRender = true;
-      }
+      if (state.tool === 'select') updateSelectedProperty('color', col, o => o.type === 'sticky');
+      else setNoteColor(col);
     };
     $('noteRow').appendChild(b);
   });
 }
 
-function setNoteColor(col) {
-  state.noteColor = col;
-  document.querySelectorAll('.nswatch').forEach(s => s.classList.toggle('active', s.dataset.col === col));
+function setNoteColor(col, updateDefault = true) {
+  if (updateDefault) state.noteColor = col;
+  document.querySelectorAll('.nswatch').forEach(s => {
+    const active = s.dataset.col === col;
+    s.classList.toggle('active', active);
+    s.setAttribute('aria-pressed', String(active));
+  });
 }
 
 function setTool(t) {
-  if (state.tool === t) return;
-  commitEditor();
-  state.tool = t;
+  if (state.tool !== t) {
+    finishGesture({ cancel: true });
+    commitEditor();
+    resetNudgeGroup();
+    if (toolSizes[state.tool] !== undefined) toolSizes[state.tool] = state.size;
+    state.tool = t;
+    if (toolSizes[t] !== undefined) state.size = toolSizes[t];
+  }
   document.querySelectorAll('#toolrail .tbtn[data-tool]')
-    .forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+    .forEach(b => {
+      const active = b.dataset.tool === t;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
   $('eraserRing').style.display = 'none';
   $('laserDot').style.display = 'none';
   refreshContextUI();
@@ -2299,13 +2838,30 @@ function setTool(t) {
 
 function refreshContextUI() {
   const t = state.tool;
+  const selected = t === 'select' ? getSelectedObjects() : [];
   const shapeish = ['line', 'rect', 'ellipse', 'arrow'].includes(t);
-  const sw  = ['pen', 'highlighter', ...shapeish ? [] : [], 'text'].includes(t) || shapeish;
-  const wr  = ['pen', 'highlighter', 'eraser'].includes(t) || shapeish;
-  const fr  = t === 'text';
-  const nr  = t === 'sticky';
-  const fl  = t === 'rect' || t === 'ellipse';
+  const inkObject = selected.find(o => o.color !== undefined && o.type !== 'sticky');
+  const widthObject = selected.find(o => o.width !== undefined);
+  const fontObject = selected.find(o => o.fontSize !== undefined);
+  const noteObject = selected.find(o => o.type === 'sticky');
+  const fillObject = selected.find(o => o.fill !== undefined);
+  const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text'].includes(t) || shapeish;
+  const wr = t === 'select' ? !!widthObject : ['pen', 'highlighter', 'eraser'].includes(t) || shapeish;
+  const fr = t === 'select' ? !!fontObject : t === 'text';
+  const nr = t === 'select' ? !!noteObject : t === 'sticky';
+  const fl = t === 'select' ? !!fillObject : t === 'rect' || t === 'ellipse';
   const show = (id, on) => { $(id).style.display = on ? '' : 'none'; };
+
+  setColor(inkObject ? inkObject.color : state.color, false);
+  setNoteColor(noteObject ? noteObject.color : state.noteColor, false);
+  const size = widthObject ? widthObject.width : state.size;
+  $('widthRange').max = selected.length ? Math.max(48, ...selected.map(o => o.width || 0)) : 48;
+  $('widthRange').value = size;
+  $('widthVal').textContent = Math.round(size * 10) / 10;
+  $('fontVal').textContent = fontObject ? fontObject.fontSize : state.fontSize;
+  const fill = fillObject ? !!fillObject.fill : state.fill;
+  $('fillBtn').classList.toggle('on', fill);
+  $('fillBtn').setAttribute('aria-pressed', String(fill));
 
   // Contextual width label
   if (t === 'eraser') {
@@ -2315,6 +2871,7 @@ function refreshContextUI() {
     $('widthLabel').textContent = 'Stroke';
     $('widthRow').title = 'Stroke size (Scroll mouse wheel to adjust)';
   }
+  $('widthRange').setAttribute('aria-label', t === 'eraser' ? 'Eraser size' : 'Stroke width');
 
   show('swatchRow', sw);
   show('widthRow', wr);
@@ -2323,15 +2880,24 @@ function refreshContextUI() {
   show('fillRow', fl);
   show('ctxGroup', sw || wr || fr || nr || fl);
   canvas.style.cursor = CURSORS[t] || 'default';
+  requestAnimationFrame(syncToolbarLayout);
   needsRender = true;
 }
 
 function syncBgSeg() {
   const bg = page().bg;
-  document.querySelectorAll('#bgSeg button').forEach(b => b.classList.toggle('active', b.dataset.bg === bg));
+  document.querySelectorAll('#bgSeg button').forEach(b => {
+    const active = b.dataset.bg === bg;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  });
 }
 
 function setBg(bg) {
+  if (page().bg === bg) return;
+  finishGesture({ cancel: true });
+  resetNudgeGroup();
+  pushUndo();
   page().bg = bg;
   syncBgSeg();
   scheduleThumb();
@@ -2340,17 +2906,51 @@ function setBg(bg) {
 
 /* Modal */
 let modalCb = null;
+let activeDialog = null;
+let dialogReturnFocus = null;
+let dialogBackground = [];
+
+function dialogControls(dialog) {
+  return [...dialog.querySelectorAll('button:not([disabled]), input:not([type="hidden"]), textarea, [tabindex="0"]')]
+    .filter(el => el.getClientRects().length > 0);
+}
+
+function openDialog(id) {
+  if (activeDialog) closeDialog(activeDialog.id, false);
+  dialogReturnFocus = document.activeElement;
+  finishGesture({ cancel: true });
+  commitEditor();
+  const dialog = $(id);
+  activeDialog = dialog;
+  dialog.classList.add('show');
+  dialogBackground = [...document.body.children].filter(el => el !== dialog && !['toast', 'saveStatus'].includes(el.id)).map(el => [el, el.inert]);
+  dialogBackground.forEach(([el]) => { el.inert = true; });
+  const controls = dialogControls(dialog);
+  (controls[0] || dialog).focus();
+}
+
+function closeDialog(id, restoreFocus = true) {
+  $(id).classList.remove('show');
+  if (!activeDialog || activeDialog.id !== id) return;
+  dialogBackground.forEach(([el, inert]) => { el.inert = inert; });
+  dialogBackground = [];
+  activeDialog = null;
+  const previous = dialogReturnFocus;
+  dialogReturnFocus = null;
+  if (restoreFocus && previous && previous.isConnected && previous.getClientRects().length) previous.focus();
+}
+
 function showConfirm(title, msg, okText, cb) {
   $('modalTitle').textContent = title;
   $('modalMsg').textContent = msg;
   $('modalOk').textContent = okText || 'Confirm';
   modalCb = cb;
   modalOpen = true;
-  $('modal').classList.add('show');
+  openDialog('modal');
 }
 
 function closeModal(ok) {
-  $('modal').classList.remove('show');
+  closeDialog('modal');
   modalOpen = false;
   const cb = modalCb;
   modalCb = null;
@@ -2379,10 +2979,19 @@ function toggleHelp(force) {
   const h = $('helpPanel');
   const on = force !== undefined ? force : !h.classList.contains('show');
   h.classList.toggle('show', on);
+  $('helpBtn').setAttribute('aria-expanded', String(on));
 }
 
 /* Bind UI Event Handlers */
 function bindUI() {
+  document.querySelectorAll('button').forEach(b => {
+    const label = b.dataset.tip || b.title;
+    if (label && !b.getAttribute('aria-label')) b.setAttribute('aria-label', label);
+  });
+  document.querySelectorAll('button svg').forEach(icon => {
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('focusable', 'false');
+  });
   document.querySelectorAll('#toolrail .tbtn[data-tool]')
     .forEach(b => b.onclick = () => setTool(b.dataset.tool));
 
@@ -2393,31 +3002,19 @@ function bindUI() {
   $('clearBtn').onclick = clearCurrentPage;
 
   $('customColor').addEventListener('input', e => {
-    state.custom = e.target.value;
-    $('customSw').style.setProperty('--cc', e.target.value);
-    setColor(e.target.value);
-    const selected = getSelectedObjects();
-    if (selected.length) {
-      pushUndo();
-      selected.forEach(o => { if (o.color) o.color = e.target.value; });
-      scheduleThumb();
-      needsRender = true;
-    }
+    if (state.tool !== 'select') state.custom = e.target.value;
+    chooseColor(e.target.value);
   });
 
   function updateStrokeSize(val) {
     const min = +$('widthRange').min || 1;
     const max = +$('widthRange').max || 48;
     const clamped = clamp(Math.round(val), min, max);
-    state.size = clamped;
-    $('widthRange').value = clamped;
-    $('widthVal').textContent = clamped;
-    const selected = getSelectedObjects();
-    if (selected.length) {
-      pushUndo();
-      selected.forEach(o => { if (o.width !== undefined) o.width = state.size; });
-      scheduleThumb();
-      needsRender = true;
+    if (state.tool === 'select') updateSelectedProperty('width', clamped);
+    else {
+      state.size = clamped;
+      if (toolSizes[state.tool] !== undefined) toolSizes[state.tool] = clamped;
+      refreshContextUI();
     }
   }
 
@@ -2429,41 +3026,31 @@ function bindUI() {
     e.preventDefault();
     const step = e.shiftKey ? 5 : 1;
     const delta = e.deltaY < 0 ? step : -step;
-    updateStrokeSize(state.size + delta);
+    updateStrokeSize(+$('widthRange').value + delta);
   }, { passive: false });
 
   function updateFontSize(val) {
-    const clamped = clamp(Math.round(val), 10, 96);
-    state.fontSize = clamped;
-    $('fontVal').textContent = clamped;
-    const selected = getSelectedObjects();
-    if (selected.length) {
-      pushUndo();
-      selected.forEach(o => { if (o.fontSize !== undefined) o.fontSize = state.fontSize; });
-      scheduleThumb();
-      needsRender = true;
-    }
+    const selected = state.tool === 'select' ? getSelectedObjects() : [];
+    const max = Math.max(96, ...selected.map(o => o.fontSize || 0));
+    const clamped = clamp(Math.round(val), 10, max);
+    if (state.tool === 'select') updateSelectedProperty('fontSize', clamped);
+    else { state.fontSize = clamped; refreshContextUI(); }
   }
 
-  $('fontMinus').onclick = () => updateFontSize(state.fontSize - 2);
-  $('fontPlus').onclick = () => updateFontSize(state.fontSize + 2);
+  $('fontMinus').onclick = () => updateFontSize(+$('fontVal').textContent - 2);
+  $('fontPlus').onclick = () => updateFontSize(+$('fontVal').textContent + 2);
 
   $('fontRow').addEventListener('wheel', e => {
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 2 : -2;
-    updateFontSize(state.fontSize + delta);
+    const step = e.shiftKey ? 10 : 2;
+    const delta = e.deltaY < 0 ? step : -step;
+    updateFontSize(+$('fontVal').textContent + delta);
   }, { passive: false });
 
   $('fillBtn').onclick = () => {
-    state.fill = !state.fill;
-    $('fillBtn').classList.toggle('on', state.fill);
-    const selected = getSelectedObjects();
-    if (selected.length) {
-      pushUndo();
-      selected.forEach(o => { if (o.fill !== undefined) o.fill = state.fill; });
-      scheduleThumb();
-      needsRender = true;
-    }
+    const fill = !$('fillBtn').classList.contains('on');
+    if (state.tool === 'select') updateSelectedProperty('fill', fill);
+    else { state.fill = fill; refreshContextUI(); }
   };
 
   document.querySelectorAll('#bgSeg button').forEach(b => b.onclick = () => setBg(b.dataset.bg));
@@ -2477,14 +3064,10 @@ function bindUI() {
   $('helpBtn').onclick = () => toggleHelp();
 
   // Backup & Restore handlers
-  $('backupBtn').onclick = () => {
-    $('backupModal').classList.add('show');
-  };
-  $('backupCloseBtn').onclick = () => {
-    $('backupModal').classList.remove('show');
-  };
+  $('backupBtn').onclick = () => openDialog('backupModal');
+  $('backupCloseBtn').onclick = () => closeDialog('backupModal');
   $('backupModal').addEventListener('pointerdown', e => {
-    if (e.target === $('backupModal')) $('backupModal').classList.remove('show');
+    if (e.target === $('backupModal')) closeDialog('backupModal');
   });
   $('downloadBackupBtn').onclick = exportJSONBackup;
   $('uploadBackupBtn').onclick = () => $('backupInput').click();
@@ -2505,6 +3088,28 @@ function bindUI() {
 
   $('hint').onclick = hideHint;
 
+  document.addEventListener('keydown', e => {
+    if (!activeDialog) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (activeDialog.id === 'modal') closeModal(false);
+      else closeDialog(activeDialog.id);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      const controls = dialogControls(activeDialog);
+      if (!controls.length) { activeDialog.focus(); return; }
+      const index = controls.indexOf(document.activeElement);
+      const next = index < 0 ? (e.shiftKey ? controls.length - 1 : 0)
+        : (index + (e.shiftKey ? -1 : 1) + controls.length) % controls.length;
+      controls[next].focus();
+    }
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (activeDialog && !activeDialog.contains(e.target)) (dialogControls(activeDialog)[0] || activeDialog).focus();
+  });
+
   // Version badge click
   const vb = $('versionBadge');
   if (vb) {
@@ -2517,15 +3122,41 @@ function bindUI() {
     const h = $('helpPanel');
     if (!h.classList.contains('show')) return;
     if (h.contains(e.target) || $('helpBtn').contains(e.target)) return;
-    h.classList.remove('show');
+    toggleHelp(false);
   });
 
   /* Text editor lifecycle */
   const ta = $('textEditor');
   ta.addEventListener('blur', () => commitEditor());
-  ta.addEventListener('input', () => { needsRender = true; });
+  const textLimitMessage = 'Text is too large — maximum 1,000,000 characters and 10,000 text lines';
+  ta.addEventListener('paste', e => {
+    if (!editing || !e.clipboardData) return;
+    const pasted = e.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? start;
+    const value = ta.value.slice(0, start) + pasted + ta.value.slice(end);
+    if (!isValidTextContent(value, editing.kind)) {
+      e.preventDefault();
+      toast(textLimitMessage);
+    }
+  });
+  ta.addEventListener('input', () => {
+    if (!editing) return;
+    if (!isValidTextContent(ta.value, editing.kind)) {
+      ta.value = editing.lastValue;
+      toast(textLimitMessage);
+    } else {
+      editing.lastValue = ta.value;
+      scheduleSave();
+    }
+    needsRender = true;
+  });
   ta.addEventListener('keydown', e => {
     e.stopPropagation();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      toast(saveNow() ? 'Board saved' : 'Save failed — export a JSON backup');
+    }
     if (e.key === 'Escape') { e.preventDefault(); commitEditor(); }
   });
 }
@@ -2542,11 +3173,12 @@ window.addEventListener('keydown', e => {
     return;
   }
   if ($('backupModal').classList.contains('show')) {
-    if (e.key === 'Escape') { e.preventDefault(); $('backupModal').classList.remove('show'); }
+    if (e.key === 'Escape') { e.preventDefault(); closeDialog('backupModal'); }
     return;
   }
   if (e.code === 'Space') {
-    if (e.target === document.body || e.target === canvas) e.preventDefault();
+    if (e.target !== document.body && e.target !== canvas) return;
+    e.preventDefault();
     if (!spaceHeld) { spaceHeld = true; canvas.style.cursor = 'grab'; }
     return;
   }
@@ -2568,21 +3200,25 @@ window.addEventListener('keydown', e => {
       if (state.selectedIds.size) duplicateSelection();
     } else if (k === 's') {
       e.preventDefault();
-      saveNow();
-      toast('Board saved');
+      toast(saveNow() ? 'Board saved' : 'Save failed — export a JSON backup');
     } else if (k === 'c') {
       const selected = getSelectedObjects();
       if (selected.length) {
-        e.preventDefault();
         clipObjects = selected.map(cloneObj);
-        toast(`Copied ${selected.length} object${selected.length > 1 ? 's' : ''} — Ctrl+V to paste`);
       }
     } else if (k === 'a') {
       e.preventDefault();
       // Ctrl+A = Select All objects on this page!
+      setTool('select');
+      resetNudgeGroup();
       state.selectedIds = new Set(page().objects.map(o => o.id));
+      refreshContextUI();
       needsRender = true;
       toast(`Selected all (${page().objects.length} objects)`);
+    } else if (k === '+' || k === '=' || k === '-') {
+      e.preventDefault();
+      zoomBy(k === '-' ? 0.8 : 1.25);
+      scheduleSave();
     }
     return;
   }
@@ -2612,7 +3248,7 @@ window.addEventListener('keydown', e => {
     case 'Escape':
       e.preventDefault();
       if ($('helpPanel').classList.contains('show')) toggleHelp(false);
-      else { state.selectedIds.clear(); needsRender = true; }
+      else { state.selectedIds.clear(); resetNudgeGroup(); refreshContextUI(); needsRender = true; }
       break;
     case 'Delete':
     case 'Backspace':
@@ -2674,16 +3310,27 @@ function boot() {
   bindUI();
 
   let restored = false;
+  let recovered = false;
+  let raw = null;
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    recoveryRaw = localStorage.getItem(RECOVERY_KEY);
+    recoveryProtected = !!recoveryRaw;
+    updateRecoveryUI();
+    raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
       const d = JSON.parse(raw);
       if (d && Array.isArray(d.pages) && d.pages.length) {
-        restoreBoard(d);
+        const missing = restoreBoard(d, { recoverMissingImages: true });
         restored = true;
+        if (missing) { preserveOriginalSave(raw); recovered = true; }
+      } else {
+        preserveOriginalSave(raw);
+        recovered = true;
       }
     }
-  } catch (_) {}
+  } catch (_) {
+    if (raw) { preserveOriginalSave(raw); recovered = true; }
+  }
 
   rebuildStrip();
   syncBgSeg();
@@ -2693,7 +3340,8 @@ function boot() {
   updateHistoryUI();
   updateZoomLabel();
 
-  if (restored) toast('Welcome back — notebook restored');
+  if (recovered) toast('Saved data needs recovery — open Backup to download the original');
+  else if (restored) toast('Welcome back — notebook restored');
   else showHint();
 
   requestAnimationFrame(tick);
@@ -2703,6 +3351,7 @@ function boot() {
     document.fonts.ready.then(() => {
       invalidateWrapCaches();
       pages.forEach(p => p.thumbDirty = true);
+      requestAnimationFrame(syncToolbarLayout);
       needsRender = true;
     });
   }

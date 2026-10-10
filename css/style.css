@@ -13,6 +13,8 @@
   --danger: #C43C2B;
   --shadow: 0 12px 34px rgba(96, 76, 42, .14);
   --shadow-sm: 0 3px 10px rgba(96, 76, 42, .12);
+  --toolbar-bottom: 76px;
+  --board-bottom-space: 116px;
 }
 
 * {
@@ -20,6 +22,9 @@
   padding: 0;
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+}
+[hidden] {
+  display: none !important;
 }
 
 html, body {
@@ -78,7 +83,7 @@ body {
 #toolrail {
   position: fixed;
   left: 14px;
-  top: 50%;
+  top: calc((100vh + var(--toolbar-bottom) - var(--board-bottom-space)) / 2);
   transform: translateY(-50%);
   z-index: 20;
   background: var(--card);
@@ -89,7 +94,7 @@ body {
   flex-direction: column;
   gap: 3px;
   box-shadow: var(--shadow);
-  max-height: calc(100vh - 150px);
+  max-height: max(40px, calc(100vh - var(--toolbar-bottom) - var(--board-bottom-space)));
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -98,6 +103,7 @@ body {
 }
 
 .tbtn {
+  flex: 0 0 auto;
   width: 42px;
   height: 42px;
   border: none;
@@ -172,16 +178,26 @@ body {
   border-radius: 16px;
   padding: 8px 12px;
   box-shadow: var(--shadow);
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
 }
 .tb-group {
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+}
+#ctxGroup {
+  flex-wrap: wrap;
+  max-width: 100%;
+  row-gap: 8px;
 }
 .tb-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 .tb-flex {
   flex: 1 1 auto;
@@ -267,6 +283,7 @@ body {
 /* color swatches */
 #swatchRow {
   gap: 5px;
+  flex-wrap: wrap;
 }
 .swatch {
   width: 22px;
@@ -599,6 +616,9 @@ input[type=range]::-moz-range-thumb {
 .pthumb:hover .pdel {
   opacity: 1;
 }
+.pthumb:focus-within .pdel {
+  opacity: 1;
+}
 .pdel:hover {
   background: var(--danger);
 }
@@ -657,6 +677,29 @@ input[type=range]::-moz-range-thumb {
   user-select: none;
   cursor: pointer;
   transition: all .15s ease;
+  font-family: inherit;
+}
+#saveStatus {
+  position: fixed;
+  bottom: var(--board-bottom-space);
+  right: 14px;
+  z-index: 20;
+  max-width: min(320px, calc(100vw - 28px));
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .92);
+  color: #58634F;
+  font-size: 11px;
+}
+#saveStatus.error, #saveStatus[data-error="true"] {
+  background: #FFF0EC;
+  border-color: #E8ADA0;
+  color: #A92D1E;
+}
+button:focus-visible, .pthumb:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 #versionBadge:hover {
   color: var(--ink);
@@ -669,9 +712,9 @@ input[type=range]::-moz-range-thumb {
 /* ---------- help panel ---------- */
 #helpPanel {
   position: fixed;
-  top: 66px;
+  top: var(--toolbar-bottom);
   right: 16px;
-  width: 320px;
+  width: min(320px, calc(100vw - 32px));
   z-index: 50;
   display: none;
   background: var(--card);
@@ -681,7 +724,7 @@ input[type=range]::-moz-range-thumb {
   padding: 16px 18px;
   font-size: 12.8px;
   line-height: 1.55;
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - var(--toolbar-bottom) - 20px);
   overflow-y: auto;
 }
 #helpPanel.show {
@@ -781,6 +824,8 @@ kbd {
   box-shadow: var(--shadow);
   padding: 24px 24px 20px;
   animation: pop .18s ease-out;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
 }
 .modal-card h3 {
   font-size: 17px;
@@ -856,7 +901,7 @@ kbd {
 /* ---------- first-run hint & drop overlay ---------- */
 #hint {
   position: fixed;
-  top: 76px;
+  top: var(--toolbar-bottom);
   left: 50%;
   transform: translateX(-50%);
   z-index: 15;
@@ -918,6 +963,9 @@ kbd {
    RESPONSIVE DESIGN (Tablets & Mobile)
    ========================================================== */
 @media (max-width: 768px) {
+  :root {
+    --board-bottom-space: 90px;
+  }
   #topbar {
     top: 8px;
     left: 8px;
@@ -969,8 +1017,10 @@ kbd {
 }
 
 @media (max-width: 480px) {
-  #zoomGroup, #bgGroup {
-    display: none;
+  #ctxGroup {
+    order: 2;
+    flex-basis: 100%;
+    gap: 8px;
   }
   input[type=range] {
     width: 80px;
