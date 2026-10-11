@@ -8,13 +8,13 @@ function createApp(options = {}) {
   let clock = options.now ?? 1000, timerId = 0;
   const storage = new Map(Object.entries(options.storage || {}));
   const context = {
-    font: '10px sans-serif', operations: [], stack: [],
-    save() { this.stack.push({font:this.font}); },
+    font: '10px sans-serif', globalAlpha:1, globalCompositeOperation:'source-over', operations: [], stack: [],
+    save() { this.stack.push({font:this.font,globalAlpha:this.globalAlpha,globalCompositeOperation:this.globalCompositeOperation}); },
     restore() { Object.assign(this, this.stack.pop() || {}); },
     measureText(value) { return {width:String(value).length * (parseFloat(this.font.match(/([\d.]+)px/)?.[1]) || 10) * 0.6}; }
   };
   for (const name of ['beginPath','closePath','moveTo','lineTo','quadraticCurveTo','bezierCurveTo','arc','arcTo','ellipse','rect','fill','stroke','fillRect','strokeRect','clearRect','fillText','drawImage','clip','translate','rotate','scale','setTransform','setLineDash']) {
-    context[name] = function (...args) { this.operations.push({name,args}); };
+    context[name] = function (...args) { this.operations.push({name,args,alpha:this.globalAlpha}); };
   }
   function makeElement(tagName = 'div', id = '') {
     const handlers = {}, attrs = {}, classes = new Set();
@@ -74,7 +74,7 @@ function createApp(options = {}) {
       else if(['min','max','step','value','title'].includes(attr[1]))e[attr[1]]=value;
     }
   }
-  for(const tool of ['select','pen','highlighter','eraser','line','rect','ellipse','arrow','text','sticky','laser','hand']){const e=makeElement('button');e.className='tbtn';e.dataset.tool=tool;document.getElementById('toolrail').appendChild(e);}
+  for(const tool of ['select','pen','highlighter','eraser','bucket','line','rect','ellipse','arrow','text','sticky','laser','hand']){const e=makeElement('button');e.className='tbtn';e.dataset.tool=tool;document.getElementById('toolrail').appendChild(e);}
   for(const bg of ['blank','dots','grid','ruled']){const e=makeElement('button');e.dataset.bg=bg;document.getElementById('bgSeg').appendChild(e);}
   const hoverMedia={matches:options.hasHover ?? false,addEventListener(name,cb){(this.handlers[name] ||= []).push(cb);},handlers:{}};
   const window={innerWidth:1280,innerHeight:720,devicePixelRatio:1,matchMedia:()=>hoverMedia,addEventListener(name,cb){(windowHandlers[name] ||= []).push(cb);}};

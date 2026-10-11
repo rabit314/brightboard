@@ -80,6 +80,45 @@ body {
 }
 
 /* ---------- left tool rail ---------- */
+.panel-pin {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: #F4F0E6;
+  color: var(--muted);
+  cursor: pointer;
+}
+.panel-pin svg { width: 17px; height: 17px; }
+.panel-pin:hover { color: var(--accent); }
+.panel-pin[aria-pressed="true"] { color: white; background: var(--accent); }
+#pinToolbox { position: sticky; top: -7px; z-index: 2; }
+#pinPages { width: 26px; height: 81px; }
+#brushPreview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: none;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 1px rgba(35, 40, 47, .7);
+  pointer-events: none;
+  z-index: 6;
+}
+#brushPreview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: var(--brush-opacity, 1);
+}
+#opacityRange { width: 80px; }
+#opacityVal { min-width: 35px; }
+
 #toolrail {
   position: fixed;
   left: 14px;
@@ -670,12 +709,14 @@ body.auto-hide-panels #pagestrip {
   transform: translate(-50%, calc(100% + 24px));
 }
 body.auto-hide-panels #toolrail.is-revealed,
+body.auto-hide-panels #toolrail.is-pinned,
 body.auto-hide-panels #toolrail:has(:focus-visible) {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(-50%);
 }
 body.auto-hide-panels #pagestrip.is-revealed,
+body.auto-hide-panels #pagestrip.is-pinned,
 body.auto-hide-panels #pagestrip:has(:focus-visible) {
   opacity: 1;
   pointer-events: auto;
@@ -1033,6 +1074,8 @@ kbd {
     width: 36px;
     height: 36px;
   }
+  #pinToolbox { width: 36px; }
+  #pinPages { height: 62px; }
   .tbtn svg {
     width: 18px;
     height: 18px;

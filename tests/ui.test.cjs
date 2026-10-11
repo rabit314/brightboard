@@ -38,14 +38,14 @@ test('mouse panels hide, reveal independently at their edges and stay open durin
   app.flushTimers();
   assert.equal(rail.classList.contains('is-revealed'), false);
   assert.equal(strip.classList.contains('is-revealed'), false);
-  move(5,300);
+  move(110,300);
   assert.equal(rail.classList.contains('is-revealed'), true);
   assert.equal(strip.classList.contains('is-revealed'), false);
   move(400,300);
   move(60,300,{target:rail.children[0]});
   app.flushTimers();
   assert.equal(rail.classList.contains('is-revealed'), true);
-  move(500,715);
+  move(500,640);
   assert.equal(strip.classList.contains('is-revealed'), true);
   move(600,650,{target:strip});
   app.flushTimers();
@@ -78,6 +78,90 @@ test('touch panels remain visible and changing input mode cancels pending hiding
   app.flushTimers();
   assert.equal(app.document.body.classList.contains('auto-hide-panels'), false);
   for (const id of ['toolrail','pagestrip']) assert.equal(app.elements.get(id).classList.contains('is-revealed'), true);
+});
+
+test('pins persist independently, cancel hiding and survive rebuilding pages', () => {
+  const app = createApp({hasHover:true});
+  app.elements.get('pinToolbox').click();
+  app.flushTimers();
+  assert.equal(app.elements.get('toolrail').classList.contains('is-pinned'), true);
+  assert.equal(app.elements.get('toolrail').classList.contains('is-revealed'), true);
+  assert.equal(app.elements.get('pagestrip').classList.contains('is-pinned'), false);
+  const pin = app.elements.get('pinPages');
+  pin.click(); pin.focus();
+  app.run('addPage();');
+  assert.equal(app.document.activeElement, pin);
+  assert.equal(app.elements.get('pagestrip').children[0], pin);
+  pin.click();
+  app.flushTimers();
+  assert.equal(app.elements.get('pagestrip').classList.contains('is-pinned'), false);
+  const restored = createApp({hasHover:true,storage:Object.fromEntries(app.storage)});
+  restored.flushTimers();
+  assert.equal(restored.elements.get('toolrail').classList.contains('is-pinned'), true);
+  assert.equal(restored.elements.get('pagestrip').classList.contains('is-pinned'), false);
+  restored.elements.get('pinToolbox').click();
+  restored.flushTimers();
+  assert.equal(restored.elements.get('toolrail').classList.contains('is-revealed'), false);
+});
+
+test('brush cursor follows width, colour, opacity and zoom and hides off the board', () => {
+  const app = createApp();
+  const board = app.elements.get('board'), brush = app.elements.get('brushPreview');
+  board.dispatch('pointermove',{pointerType:'mouse',clientX:300,clientY:300});
+  assert.equal(brush.style.width,'4px');
+  assert.equal(brush.style.display,'block');
+  app.elements.get('widthRange').value = '20';
+  app.elements.get('widthRange').dispatch('input');
+  assert.equal(brush.style.width,'20px');
+  app.run('page().view.zoom = 2; chooseColor("#D93A3A"); refreshContextUI();');
+  assert.equal(brush.style.width,'40px');
+  assert.equal(brush.style.color,'#D93A3A');
+  app.elements.get('opacityRange').value = '30';
+  app.elements.get('opacityRange').dispatch('input');
+  assert.equal(brush.style['--brush-opacity'],0.3);
+  app.run('setTool("highlighter");');
+  assert.equal(brush.style.width,'28px');
+  assert.equal(brush.style['--brush-opacity'],0.126);
+  board.dispatch('pointerleave');
+  assert.equal(brush.style.display,'none');
+  board.dispatch('pointerenter',{pointerType:'touch',clientX:300,clientY:300});
+  assert.equal(brush.style.display,'none');
+});
+
+test('opacity edits legacy selections with undo without overwriting drawing opacity', () => {
+  const app = createApp();
+  app.run(`state.opacity = 0.7;page().objects.push({id:'rect',type:'rect',x0:100,y0:100,x1:200,y1:200,width:4,color:'#23282F',fill:true});state.selectedIds=new Set(['rect']);setTool('select');`);
+  app.elements.get('opacityRange').value = '40';
+  app.elements.get('opacityRange').dispatch('input');
+  assert.equal(app.run('page().objects[0].opacity'),0.4);
+  assert.equal(app.run('state.opacity'),0.7);
+  app.run('drawObject(ctx,page().objects[0]);');
+  assert.equal(app.context.operations.findLast(o=>o.name==='strokeRect').alpha,0.4);
+  assert.equal(app.context.operations.findLast(o=>o.name==='fillRect').alpha,0.06);
+  assert.equal(app.context.globalAlpha,1);
+  app.run('undo();');
+  assert.equal(app.run('page().objects[0].opacity'),undefined);
+  app.run('redo();restoreBoard(serializeBoard());');
+  assert.equal(app.run('page().objects[0].opacity'),0.4);
+});
+
+test('new pen, shape, text and sticky marks capture drawing opacity', () => {
+  const app = createApp();
+  const board = app.elements.get('board');
+  const pointer = (name,x,y) => board.dispatch(name,{pointerId:1,pointerType:'mouse',button:0,clientX:x,clientY:y,timeStamp:1000});
+  app.run('state.opacity = 0.25;');
+  pointer('pointerdown',300,300);pointer('pointerup',300,300);
+  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  app.run('setTool("rect");');
+  pointer('pointerdown',300,300);pointer('pointermove',400,400);pointer('pointerup',400,400);
+  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  app.run('createDraftText(300,300);');
+  assert.equal(app.run('editing.obj.opacity'),0.25);
+  assert.equal(app.elements.get('textEditor').style.opacity,0.25);
+  app.elements.get('textEditor').value = 'Transparent text';
+  app.run('commitEditor();createStickyFrom({x0:300,y0:300,x1:500,y1:500,moved:true});');
+  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  assert.equal(app.elements.get('textEditor').style.background,'transparent');
 });
 
 test('startup shows only pen controls and selecting text exposes its controls', () => {

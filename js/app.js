@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.3.0
+   Version: 1.4.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -40,6 +40,7 @@ const state = {
   color: MARKERS[0],
   custom: null,          // last custom colour picked
   size: 4,
+  opacity: 1,
   fontSize: 28,
   noteColor: NOTES[0],
   fill: false,           // light tint fill for rect / ellipse
@@ -90,8 +91,9 @@ const removeObject = id => {
 
 const CURSORS = {
   select: 'default',
-  pen: 'crosshair',
-  highlighter: 'crosshair',
+  pen: 'none',
+  highlighter: 'none',
+  bucket: 'crosshair',
   eraser: 'none',
   line: 'crosshair',
   rect: 'crosshair',
@@ -110,6 +112,7 @@ const TOOLKEYS = {
   p: 'pen',
   h: 'highlighter',
   e: 'eraser',
+  b: 'bucket',
   l: 'line',
   r: 'rect',
   o: 'ellipse',
@@ -254,13 +257,15 @@ function drawObjects(c, objects, editingId) {
   for (const o of objects) {
     if (editingId && o.id === editingId) {
       if (o.type === 'text') continue;                  // live textarea shows it
-      if (o.type === 'sticky') { drawSticky(c, o, true); continue; }
+      if (o.type === 'sticky') { c.save(); c.globalAlpha *= o.opacity ?? 1; drawSticky(c, o, true); c.restore(); continue; }
     }
     drawObject(c, o);
   }
 }
 
 function drawObject(c, o) {
+  c.save();
+  c.globalAlpha *= o.opacity ?? 1;
   switch (o.type) {
     case 'stroke':  drawStroke(c, o); break;
     case 'line':
@@ -271,17 +276,38 @@ function drawObject(c, o) {
     case 'image':   drawImageObj(c, o); break;
     case 'sticky':  drawSticky(c, o, false); break;
   }
+  c.restore();
 }
 
+const translucentStrokeLayers = new WeakMap();
 function drawStroke(c, o) {
   const pts = o.points;
   if (!pts || !pts.length) return;
+  // Composite translucent pen segments once so joins do not turn into dark dots.
+  if (o.mode !== 'hi' && c.globalAlpha < 1 && c.getTransform) {
+    const b = boundsOf(o), transform = c.getTransform();
+    const scale = Math.min(Math.hypot(transform.a, transform.b), 2048 / b.w, 2048 / b.h, Math.sqrt(2097152 / (b.w * b.h)));
+    const key = JSON.stringify([scale, o.width, o.color, pts]);
+    let cached = translucentStrokeLayers.get(o);
+    if (!cached || cached.key !== key) {
+      const layer = document.createElement('canvas');
+      layer.width = Math.max(1, Math.ceil(b.w * scale));
+      layer.height = Math.max(1, Math.ceil(b.h * scale));
+      const lc = layer.getContext('2d');
+      lc.scale(scale, scale); lc.translate(-b.x, -b.y);
+      drawStroke(lc, o);
+      cached = { key, layer };
+      translucentStrokeLayers.set(o, cached);
+    }
+    c.drawImage(cached.layer, b.x, b.y, cached.layer.width / scale, cached.layer.height / scale);
+    return;
+  }
   c.lineJoin = 'round';
   c.lineCap = 'round';
 
   if (o.mode === 'hi') {
     c.save();
-    c.globalAlpha = 0.42;
+    c.globalAlpha *= 0.42;
     c.globalCompositeOperation = 'multiply';
     c.strokeStyle = o.color;
     c.fillStyle = o.color;
@@ -339,19 +365,21 @@ function drawShape(c, o) {
       c.translate(x + w / 2, y + h / 2);
       c.rotate(o.angle);
       if (o.fill) {
-        c.globalAlpha = 0.15;
+        const strokeAlpha = c.globalAlpha;
+        c.globalAlpha *= 0.15;
         c.fillStyle = o.color;
         c.fillRect(-w / 2, -h / 2, w, h);
-        c.globalAlpha = 1;
+        c.globalAlpha = strokeAlpha;
       }
       c.strokeRect(-w / 2, -h / 2, w, h);
       c.restore();
     } else {
       if (o.fill) {
-        c.globalAlpha = 0.15;
+        const strokeAlpha = c.globalAlpha;
+        c.globalAlpha *= 0.15;
         c.fillStyle = o.color;
         c.fillRect(x, y, w, h);
-        c.globalAlpha = 1;
+        c.globalAlpha = strokeAlpha;
       }
       c.strokeRect(x, y, w, h);
     }
@@ -361,10 +389,11 @@ function drawShape(c, o) {
       c.beginPath();
       c.ellipse((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, rx, ry, o.angle || 0, 0, Math.PI * 2);
       if (o.fill) {
-        c.globalAlpha = 0.15;
+        const strokeAlpha = c.globalAlpha;
+        c.globalAlpha *= 0.15;
         c.fillStyle = o.color;
         c.fill();
-        c.globalAlpha = 1;
+        c.globalAlpha = strokeAlpha;
       }
       c.stroke();
     }
@@ -409,7 +438,7 @@ function drawTextObj(c, o) {
 
 function drawImageObj(c, o) {
   const rec = IMG.get(o.imgId);
-  if (!rec || rec.status === 'error' || !rec.el.complete || rec.el.naturalWidth === 0) return;
+  if (!rec || rec.status === 'error' || (rec.el.tagName !== 'CANVAS' && (!rec.el.complete || rec.el.naturalWidth === 0))) return;
   c.save();
   if (o.angle) {
     c.translate(o.x + o.w / 2, o.y + o.h / 2);
@@ -739,6 +768,7 @@ function render() {
   drawLaser(ctx);
   drawSelectionOverlay(v);
   positionEditor();
+  if (canvasPointerType) updateCursorOverlays({ clientX: lastPtr.x, clientY: lastPtr.y, pointerType: canvasPointerType });
 }
 
 function tick() {
@@ -1072,10 +1102,13 @@ canvas.addEventListener('pointerdown', e => {
         type: 'stroke',
         mode: t === 'pen' ? 'pen' : 'hi',
         color: state.color,
+        opacity: state.opacity,
         width: t === 'pen' ? state.size : Math.max(12, state.size * 3.5),
         points: [{ x: w.x, y: w.y, w: 1 }]
       },
     };
+  } else if (t === 'bucket') {
+    fillAt(e.clientX, e.clientY);
   } else if (t === 'eraser') {
     action = { type: 'erase', snapped: false, last: w };
     eraseAt(w, action);
@@ -1215,6 +1248,8 @@ function suspendInteractions() {
   hoveredHandle = null;
   $('eraserRing').style.display = 'none';
   $('laserDot').style.display = 'none';
+  $('brushPreview').style.display = 'none';
+  canvasPointerType = null;
   saveNow();
 }
 window.addEventListener('blur', suspendInteractions);
@@ -1222,7 +1257,10 @@ window.addEventListener('blur', suspendInteractions);
 canvas.addEventListener('pointerleave', () => {
   $('eraserRing').style.display = 'none';
   $('laserDot').style.display = 'none';
+  $('brushPreview').style.display = 'none';
+  canvasPointerType = null;
 });
+canvas.addEventListener('pointerenter', e => updateCursorOverlays(e));
 
 /* Double click: edit text / sticky, or create text box on empty board */
 canvas.addEventListener('dblclick', e => {
@@ -1306,6 +1344,7 @@ function tempShapeObj() {
     type: a.kind,
     x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1,
     color: state.color,
+    opacity: state.opacity,
     width: Math.max(1, state.size),
     fill: state.fill
   };
@@ -1319,6 +1358,7 @@ function commitShape(a) {
     type: a.kind,
     x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1,
     color: state.color,
+    opacity: state.opacity,
     width: Math.max(1, state.size),
     fill: state.fill
   });
@@ -1326,6 +1366,81 @@ function commitShape(a) {
 }
 
 /* ---- object eraser ---- */
+// Four-neighbour flood fill of the clicked colour, with a small antialias tolerance.
+// A bounded queue and a visited bitmap keep work linear in the sampled area.
+function floodRegion(data, width, height, x, y, tolerance = 24) {
+  if (width < 1 || height < 1 || width * height > 2097152 || data.length !== width * height * 4) throw new Error('Invalid fill surface');
+  x = clamp(Math.floor(x), 0, width - 1); y = clamp(Math.floor(y), 0, height - 1);
+  const start = y * width + x, offset = start * 4;
+  const target = Array.from(data.slice(offset, offset + 4));
+  const mask = new Uint8Array(width * height), seen = new Uint8Array(width * height);
+  const queue = new Int32Array(width * height);
+  let head = 0, tail = 0, count = 0, minX = x, maxX = x, minY = y, maxY = y;
+  const enqueue = pixel => { if (!seen[pixel]) { seen[pixel] = 1; queue[tail++] = pixel; } };
+  enqueue(start);
+  while (head < tail) {
+    const pixel = queue[head++], i = pixel * 4;
+    if (target.some((value, channel) => Math.abs(data[i + channel] - value) > tolerance)) continue;
+    mask[pixel] = 1; count++;
+    const px = pixel % width, py = Math.floor(pixel / width);
+    minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+    if (px > 0) enqueue(pixel - 1);
+    if (px + 1 < width) enqueue(pixel + 1);
+    if (py > 0) enqueue(pixel - width);
+    if (py + 1 < height) enqueue(pixel + width);
+  }
+  return { mask, count, minX, minY, maxX, maxY, target };
+}
+
+function fillAt(clientX, clientY) {
+  if (page().objects.some(o => o.type === 'image' && IMG.get(o.imgId)?.status === 'loading')) {
+    toast('Wait for images to load before filling'); return;
+  }
+  try {
+    const v = page().view;
+    const scale = Math.min(1, 2048 / VW, 2048 / VH, Math.sqrt(2097152 / (VW * VH)));
+    const surface = document.createElement('canvas');
+    surface.width = Math.max(1, Math.floor(VW * scale));
+    surface.height = Math.max(1, Math.floor(VH * scale));
+    const c = surface.getContext('2d', { willReadFrequently: true });
+    c.scale(scale, scale);
+    // Notebook grids are guides, not barriers for the paint bucket.
+    paintBoard(c, VW, VH, v, 'blank', page().objects, null);
+    const data = c.getImageData(0, 0, surface.width, surface.height);
+    const region = floodRegion(data.data, surface.width, surface.height, clientX * scale, clientY * scale);
+    let hex = state.color.slice(1);
+    if (hex.length <= 4) hex = [...hex].map(ch => ch + ch).join('');
+    const rgba = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
+    rgba.push(hex.length === 8 ? parseInt(hex.slice(6, 8), 16) : 255);
+    if (state.opacity === 1 && region.target.every((value, i) => Math.abs(value - rgba[i]) <= 1)) return;
+    const layer = document.createElement('canvas');
+    layer.width = region.maxX - region.minX + 1;
+    layer.height = region.maxY - region.minY + 1;
+    const lc = layer.getContext('2d'), pixels = lc.createImageData(layer.width, layer.height);
+    for (let y = 0; y < layer.height; y++) {
+      for (let x = 0; x < layer.width; x++) {
+        if (!region.mask[(y + region.minY) * surface.width + x + region.minX]) continue;
+        pixels.data.set(rgba, (y * layer.width + x) * 4);
+      }
+    }
+    lc.putImageData(pixels, 0, 0);
+    const imgId = uid();
+    const obj = { id: uid(), type: 'image', imgId, opacity: state.opacity,
+      x: (region.minX / scale - v.panX) / v.zoom, y: (region.minY / scale - v.panY) / v.zoom,
+      w: layer.width / (scale * v.zoom), h: layer.height / (scale * v.zoom) };
+    if (!hasValidGeometry(obj)) { toast('Move closer to the centre of the board to fill'); return; }
+    const src = layer.toDataURL('image/png');
+    pushUndo();
+    IMG.set(imgId, { el: layer, src, w: layer.width, h: layer.height, status: 'ready' });
+    page().objects.push(obj);
+    state.selectedIds.clear();
+    resetNudgeGroup();
+    scheduleThumb();
+    needsRender = true;
+  } catch (_) { toast('Could not fill this area'); }
+}
+
 function eraseAt(w, a) {
   const r = Math.max(6, state.size * 2.5);
   const d = Math.hypot(w.x - a.last.x, w.y - a.last.y);
@@ -1356,8 +1471,20 @@ function startPan(e) {
 }
 
 /* ---- custom pointer previews ---- */
+let canvasPointerType = null;
 function updateCursorOverlays(e) {
+  canvasPointerType = e.pointerType || canvasPointerType;
   const ring = $('eraserRing'), dot = $('laserDot');
+  const brush = $('brushPreview');
+  if (['pen', 'highlighter'].includes(state.tool) && !spaceHeld && canvasPointerType !== 'touch' && action?.type !== 'pan' && action?.type !== 'pinch') {
+    const width = state.tool === 'highlighter' ? Math.max(12, state.size * 3.5) : state.size;
+    const diameter = Math.max(1, width * page().view.zoom);
+    brush.style.display = 'block';
+    brush.style.width = brush.style.height = diameter + 'px';
+    brush.style.color = state.color;
+    brush.style.setProperty('--brush-opacity', state.opacity * (state.tool === 'highlighter' ? 0.42 : 1));
+    brush.style.transform = `translate(${e.clientX - diameter / 2}px,${e.clientY - diameter / 2}px)`;
+  } else brush.style.display = 'none';
   if (state.tool === 'eraser' && !spaceHeld) {
     const r = Math.max(6, state.size * 2.5) * page().view.zoom;
     ring.style.display = 'block';
@@ -1749,7 +1876,7 @@ function nudge(dx, dy) {
    8. TEXT & STICKY EDITING
    ================================================================ */
 function createDraftText(x, y) {
-  const o = { id: uid(), type: 'text', x, y, color: state.color, fontSize: state.fontSize, lines: [''] };
+  const o = { id: uid(), type: 'text', x, y, color: state.color, opacity: state.opacity, fontSize: state.fontSize, lines: [''] };
   openEditor(o, 'text', true);
 }
 
@@ -1768,13 +1895,14 @@ function openEditor(o, kind, isNew = false) {
   ta.wrap = kind === 'sticky' ? 'soft' : 'off';
   ta.classList.toggle('sticky-mode', kind === 'sticky');
   if (kind === 'sticky') {
-    ta.style.background = o.color;
+    ta.style.background = 'transparent';
     ta.style.color = STICKY_INK;
   } else {
     ta.style.background = 'transparent';
     ta.style.color = o.color;
   }
   ta.style.display = 'block';
+  ta.style.opacity = o.opacity ?? 1;
   positionEditor();
   ta.focus();
   try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
@@ -1855,6 +1983,7 @@ function createStickyFrom(a) {
     type: 'sticky',
     x, y, w, h,
     color: state.noteColor,
+    opacity: state.opacity,
     fontSize: clamp(Math.round(Math.sqrt(w * h) / 6.5), 16, 40),
     text: ''
   };
@@ -2291,12 +2420,15 @@ function restoreFromJSONFile(file) {
    ================================================================ */
 function rebuildStrip() {
   const strip = $('pagestrip');
+  const pin = $('pinPages');
   const focused = document.activeElement;
   const preserveFocus = strip.contains(focused);
   const focusedPageId = focused && (focused.dataset.pageId || focused.parentElement?.dataset.pageId);
   const focusDelete = focused && focused.classList.contains('pdel');
   const focusAdd = focused && focused.id === 'addPage';
+  const focusPin = focused === pin;
   strip.innerHTML = '';
+  strip.appendChild(pin);
   pages.forEach((p, i) => {
     const d = document.createElement('div');
     d.className = 'pthumb' + (i === state.pageIndex ? ' active' : '');
@@ -2349,8 +2481,8 @@ function rebuildStrip() {
   add.onclick = addPage;
   strip.appendChild(add);
   if (preserveFocus) {
-    const thumb = Array.from(strip.children).find(d => d.dataset.pageId === focusedPageId) || strip.children[state.pageIndex];
-    const target = focusAdd ? add : focusDelete && thumb?.dataset.pageId === focusedPageId ? thumb.querySelector('.pdel') : thumb;
+    const thumb = Array.from(strip.children).find(d => d.dataset.pageId === focusedPageId) || strip.children[state.pageIndex + 1];
+    const target = focusPin ? pin : focusAdd ? add : focusDelete && thumb?.dataset.pageId === focusedPageId ? thumb.querySelector('.pdel') : thumb;
     target?.focus();
   }
 }
@@ -2695,6 +2827,7 @@ function validateBoardObject(o, assets, ids) {
   if (ids.has(id)) throw new Error('Duplicate object ID');
   ids.add(id);
   const obj = { id, type: o.type };
+  if (o.opacity !== undefined) obj.opacity = validNumber(o.opacity, 0.01, 1);
   const number = (key, min, max) => { obj[key] = validNumber(o[key], min, max); };
   if (o.type !== 'image') {
     if (typeof o.color !== 'string' || !/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(o.color)) throw new Error('Invalid object color');
@@ -2753,7 +2886,7 @@ window.addEventListener('resize', syncToolbarLayout);
 
 function updateSelectedProperty(property, value, predicate = () => true) {
   if (state.tool !== 'select') return;
-  const selected = getSelectedObjects().filter(o => predicate(o) && o[property] !== undefined && o[property] !== value);
+  const selected = getSelectedObjects().filter(o => predicate(o) && (o[property] !== undefined || property === 'opacity') && (property === 'opacity' ? o.opacity ?? 1 : o[property]) !== value);
   if (!selected.length) return;
   finishGesture({ cancel: true });
   resetNudgeGroup();
@@ -2840,6 +2973,7 @@ function setTool(t) {
     });
   $('eraserRing').style.display = 'none';
   $('laserDot').style.display = 'none';
+  $('brushPreview').style.display = 'none';
   refreshContextUI();
 }
 
@@ -2852,11 +2986,12 @@ function refreshContextUI() {
   const fontObject = selected.find(o => o.fontSize !== undefined);
   const noteObject = selected.find(o => o.type === 'sticky');
   const fillObject = selected.find(o => o.fill !== undefined);
-  const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text'].includes(t) || shapeish;
+  const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text', 'bucket'].includes(t) || shapeish;
   const wr = t === 'select' ? !!widthObject : ['pen', 'highlighter', 'eraser'].includes(t) || shapeish;
   const fr = t === 'select' ? !!fontObject : t === 'text';
   const nr = t === 'select' ? !!noteObject : t === 'sticky';
   const fl = t === 'select' ? !!fillObject : t === 'rect' || t === 'ellipse';
+  const op = t === 'select' ? selected.length > 0 : ['pen', 'highlighter', 'text', 'sticky', 'bucket'].includes(t) || shapeish;
   const show = (id, on) => { $(id).style.display = on ? '' : 'none'; };
 
   setColor(inkObject ? inkObject.color : state.color, false);
@@ -2866,6 +3001,9 @@ function refreshContextUI() {
   $('widthRange').value = size;
   $('widthVal').textContent = Math.round(size * 10) / 10;
   $('fontVal').textContent = fontObject ? fontObject.fontSize : state.fontSize;
+  const opacity = selected.length ? selected[0].opacity ?? 1 : state.opacity;
+  $('opacityRange').value = Math.round(opacity * 100);
+  $('opacityVal').textContent = Math.round(opacity * 100) + '%';
   const fill = fillObject ? !!fillObject.fill : state.fill;
   $('fillBtn').classList.toggle('on', fill);
   $('fillBtn').setAttribute('aria-pressed', String(fill));
@@ -2885,8 +3023,10 @@ function refreshContextUI() {
   show('fontRow', fr);
   show('noteRow', nr);
   show('fillRow', fl);
-  show('ctxGroup', sw || wr || fr || nr || fl);
+  show('opacityRow', op);
+  show('ctxGroup', sw || wr || fr || nr || fl || op);
   canvas.style.cursor = CURSORS[t] || 'default';
+  if (canvasPointerType) updateCursorOverlays({ ...lastPtr, clientX: lastPtr.x, clientY: lastPtr.y, pointerType: canvasPointerType });
   requestAnimationFrame(syncToolbarLayout);
   needsRender = true;
 }
@@ -3027,6 +3167,11 @@ function bindUI() {
 
   $('widthRange').addEventListener('input', e => {
     updateStrokeSize(+e.target.value);
+  });
+  $('opacityRange').addEventListener('input', e => {
+    const opacity = clamp(Number(e.target.value) / 100, 0.01, 1);
+    if (state.tool === 'select') updateSelectedProperty('opacity', opacity);
+    else { state.opacity = opacity; refreshContextUI(); }
   });
 
   $('widthRow').addEventListener('wheel', e => {
@@ -3314,6 +3459,9 @@ function bindPanelAutoHide() {
   const hover = window.matchMedia?.('(hover: hover) and (pointer: fine)');
   if (!hover) return;
   const panels = [$('toolrail'), $('pagestrip')];
+  const pins = [$('pinToolbox'), $('pinPages')];
+  let preferences = {};
+  try { preferences = JSON.parse(localStorage.getItem('brightboard.panels.v1') || '{}') || {}; } catch (_) {}
   const hideTimers = new Map();
   const cancelHide = panel => {
     clearTimeout(hideTimers.get(panel));
@@ -3324,12 +3472,31 @@ function bindPanelAutoHide() {
     panel.classList.add('is-revealed');
   };
   const hideLater = (panel, delay = 600) => {
-    if (hideTimers.has(panel) || !panel.classList.contains('is-revealed')) return;
+    if (panel.classList.contains('is-pinned') || hideTimers.has(panel) || !panel.classList.contains('is-revealed')) return;
     hideTimers.set(panel, setTimeout(() => {
       panel.classList.remove('is-revealed');
       hideTimers.delete(panel);
     }, delay));
   };
+  panels.forEach((panel, index) => {
+    const pin = pins[index];
+    const label = index === 0 ? 'toolbox' : 'pages';
+    const updatePin = pinned => {
+      panel.classList.toggle('is-pinned', pinned);
+      pin.setAttribute('aria-pressed', String(pinned));
+      pin.title = pinned ? `Let ${label} hide automatically` : `Keep ${label} visible`;
+      pin.setAttribute('aria-label', pin.title);
+    };
+    updatePin(preferences[panel.id] === true);
+    pin.onclick = () => {
+      const pinned = !panel.classList.contains('is-pinned');
+      updatePin(pinned);
+      reveal(panel);
+      if (!pinned && hover.matches) hideLater(panel, 1800);
+      preferences = Object.fromEntries(panels.map(p => [p.id, p.classList.contains('is-pinned')]));
+      try { localStorage.setItem('brightboard.panels.v1', JSON.stringify(preferences)); } catch (_) {}
+    };
+  });
   const syncMode = () => {
     document.body.classList.toggle('auto-hide-panels', hover.matches);
     panels.forEach(panel => {
@@ -3345,7 +3512,9 @@ function bindPanelAutoHide() {
     if (!hover.matches || e.pointerType !== 'mouse' || e.buttons || action || activePtrs.size) return;
     panels.forEach((panel, index) => {
       const rect = panel.getBoundingClientRect();
-      const atEdge = index === 0 ? e.clientX <= 28 : e.clientY >= window.innerHeight - 28;
+      const atEdge = index === 0
+        ? e.clientX <= Math.max(120, Math.min(180, window.innerWidth * 0.085))
+        : e.clientY >= window.innerHeight - Math.max(90, Math.min(130, window.innerHeight * 0.1));
       const inPanel = panel.contains(e.target);
       const inApproach = panel.classList.contains('is-revealed') && (index === 0
         ? e.clientX <= rect.right + 12 && e.clientY >= rect.top - 12 && e.clientY <= rect.bottom + 12

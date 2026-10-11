@@ -169,7 +169,7 @@ test('async thumbnail scheduling marks only the destination page', () => {
 test('page thumbnails switch with keyboard and delete buttons stop propagation', () => {
   const app = createApp();
   app.run('pages.push(newPage());rebuildStrip();');
-  const second = app.elements.get('pagestrip').children[1];
+  const second = app.elements.get('pagestrip').querySelectorAll('.pthumb')[1];
   assert.equal(second.getAttribute('role'), 'button');
   assert.equal(second.tabIndex, 0);
   second.focus();
@@ -178,7 +178,7 @@ test('page thumbnails switch with keyboard and delete buttons stop propagation',
   assert.equal(app.run('state.pageIndex'), 1);
   assert.equal(event.prevented, true);
   assert.equal(event.stopped, true);
-  const active = app.elements.get('pagestrip').children[1];
+  const active = app.elements.get('pagestrip').querySelectorAll('.pthumb')[1];
   assert.equal(active.getAttribute('aria-current'), 'page');
   assert.equal(app.document.activeElement, active);
   const del = active.children.find(child => child.classList.contains('pdel'));
