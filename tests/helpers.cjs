@@ -76,7 +76,8 @@ function createApp(options = {}) {
   }
   for(const tool of ['select','pen','highlighter','eraser','line','rect','ellipse','arrow','text','sticky','laser','hand']){const e=makeElement('button');e.className='tbtn';e.dataset.tool=tool;document.getElementById('toolrail').appendChild(e);}
   for(const bg of ['blank','dots','grid','ruled']){const e=makeElement('button');e.dataset.bg=bg;document.getElementById('bgSeg').appendChild(e);}
-  const window={innerWidth:1280,innerHeight:720,devicePixelRatio:1,addEventListener(name,cb){(windowHandlers[name] ||= []).push(cb);}};
+  const hoverMedia={matches:options.hasHover ?? false,addEventListener(name,cb){(this.handlers[name] ||= []).push(cb);},handlers:{}};
+  const window={innerWidth:1280,innerHeight:720,devicePixelRatio:1,matchMedia:()=>hoverMedia,addEventListener(name,cb){(windowHandlers[name] ||= []).push(cb);}};
   class FakeImage {
     constructor(){this.complete=false;this.naturalWidth=0;this.naturalHeight=0;images.push(this);}
     set src(value){this._src=value;this.complete=false;}get src(){return this._src;}
@@ -102,7 +103,7 @@ function createApp(options = {}) {
     json(code){return JSON.parse(vm.runInContext(`JSON.stringify(${code})`,vmContext,{timeout:5000}));},
     fire(name,event={}){event.target ||= document.body;event.preventDefault ||= function(){this.defaultPrevented=true;};event.stopPropagation ||= function(){this.propagationStopped=true;};for(const cb of windowHandlers[name]||[])cb(event);return event;},
     setNow(value){clock=value;},flushTimers(){const queued=[...timers.values()];timers.clear();queued.forEach(t=>t.cb());},
-    elements,document,window,windowHandlers,documentHandlers,images,readers,canvases,timers,storage,storageWrites,context,
+    elements,document,window,windowHandlers,documentHandlers,images,readers,canvases,timers,storage,storageWrites,context,hoverMedia,
   };
 }
 module.exports={createApp};

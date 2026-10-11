@@ -656,6 +656,32 @@ input[type=range]::-moz-range-thumb {
   stroke-width: 2;
 }
 
+/* Mouse users reveal panels at the canvas edges; keyboard focus reveals them too. */
+body.auto-hide-panels #toolrail,
+body.auto-hide-panels #pagestrip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+body.auto-hide-panels #toolrail {
+  transform: translate(calc(-100% - 24px), -50%);
+}
+body.auto-hide-panels #pagestrip {
+  transform: translate(-50%, calc(100% + 24px));
+}
+body.auto-hide-panels #toolrail.is-revealed,
+body.auto-hide-panels #toolrail:has(:focus-visible) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+body.auto-hide-panels #pagestrip.is-revealed,
+body.auto-hide-panels #pagestrip:has(:focus-visible) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
 /* ---------- version badge (bottom-right) ---------- */
 #versionBadge {
   position: fixed;
@@ -681,9 +707,9 @@ input[type=range]::-moz-range-thumb {
 }
 #saveStatus {
   position: fixed;
-  bottom: var(--board-bottom-space);
-  right: 14px;
-  z-index: 20;
+  bottom: 14px;
+  left: 14px;
+  z-index: 21;
   max-width: min(320px, calc(100vw - 28px));
   padding: 4px 9px;
   border: 1px solid var(--line);
@@ -691,6 +717,14 @@ input[type=range]::-moz-range-thumb {
   background: rgba(255, 255, 255, .92);
   color: #58634F;
   font-size: 11px;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+#saveStatus.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 #saveStatus.error, #saveStatus[data-error="true"] {
   background: #FFF0EC;
@@ -707,6 +741,14 @@ button:focus-visible, .pthumb:focus-visible, input:focus-visible {
   border-color: #D5CDBB;
   box-shadow: 0 4px 12px rgba(96, 76, 42, .15);
   transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.auto-hide-panels #toolrail,
+  body.auto-hide-panels #pagestrip,
+  #saveStatus {
+    transition: none;
+  }
 }
 
 /* ---------- help panel ---------- */

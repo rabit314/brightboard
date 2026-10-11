@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.2.4
+   Version: 1.3.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.2.4';
+const APP_VERSION = '1.3.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -2548,11 +2548,18 @@ function scheduleSave() {
   saveTimer = setTimeout(saveNow, 800);
 }
 
+let saveStatusTimer = null;
 function setSaveStatus(message, failed = false) {
   const status = $('saveStatus');
   if (!status) return;
+  clearTimeout(saveStatusTimer);
   status.textContent = message;
   status.classList.toggle('error', failed);
+  status.classList.add('show');
+  // Keep pending saves and failures visible until the next result arrives.
+  if (!failed && message !== 'Saving…') {
+    saveStatusTimer = setTimeout(() => status.classList.remove('show'), 2400);
+  }
 }
 
 function saveNow() {
@@ -3303,6 +3310,64 @@ window.addEventListener('keyup', e => {
 /* ================================================================
    16. BOOTSTRAP
    ================================================================ */
+function bindPanelAutoHide() {
+  const hover = window.matchMedia?.('(hover: hover) and (pointer: fine)');
+  if (!hover) return;
+  const panels = [$('toolrail'), $('pagestrip')];
+  const hideTimers = new Map();
+  const cancelHide = panel => {
+    clearTimeout(hideTimers.get(panel));
+    hideTimers.delete(panel);
+  };
+  const reveal = panel => {
+    cancelHide(panel);
+    panel.classList.add('is-revealed');
+  };
+  const hideLater = (panel, delay = 600) => {
+    if (hideTimers.has(panel) || !panel.classList.contains('is-revealed')) return;
+    hideTimers.set(panel, setTimeout(() => {
+      panel.classList.remove('is-revealed');
+      hideTimers.delete(panel);
+    }, delay));
+  };
+  const syncMode = () => {
+    document.body.classList.toggle('auto-hide-panels', hover.matches);
+    panels.forEach(panel => {
+      reveal(panel);
+      if (hover.matches) hideLater(panel, 1800);
+    });
+  };
+  hover.addEventListener('change', syncMode);
+  syncMode();
+
+  document.addEventListener('pointermove', e => {
+    // Do not bring controls over a stroke or a pan as it crosses an edge.
+    if (!hover.matches || e.pointerType !== 'mouse' || e.buttons || action || activePtrs.size) return;
+    panels.forEach((panel, index) => {
+      const rect = panel.getBoundingClientRect();
+      const atEdge = index === 0 ? e.clientX <= 28 : e.clientY >= window.innerHeight - 28;
+      const inPanel = panel.contains(e.target);
+      const inApproach = panel.classList.contains('is-revealed') && (index === 0
+        ? e.clientX <= rect.right + 12 && e.clientY >= rect.top - 12 && e.clientY <= rect.bottom + 12
+        : e.clientX >= rect.left - 12 && e.clientX <= rect.right + 12 && e.clientY >= rect.top - 12);
+      if (atEdge || inPanel || inApproach) reveal(panel);
+      else hideLater(panel);
+    });
+  });
+  panels.forEach(panel => {
+    panel.addEventListener('pointerenter', e => {
+      if (hover.matches && e.pointerType === 'mouse' && !e.buttons && !action) reveal(panel);
+    });
+    panel.addEventListener('pointerleave', () => {
+      if (hover.matches) hideLater(panel);
+    });
+  });
+  // Leaving the browser also clears panels whose hover previously kept them open.
+  document.addEventListener('pointerout', e => {
+    if (hover.matches && !e.relatedTarget) panels.forEach(panel => hideLater(panel));
+  });
+}
+
 function boot() {
   resizeCanvas();
   buildSwatches();
@@ -3339,6 +3404,8 @@ function boot() {
   setTool(state.tool);
   updateHistoryUI();
   updateZoomLabel();
+  bindPanelAutoHide();
+  if (!recovered && !recoveryRaw) setSaveStatus('Autosave ready');
 
   if (recovered) toast('Saved data needs recovery — open Backup to download the original');
   else if (restored) toast('Welcome back — notebook restored');

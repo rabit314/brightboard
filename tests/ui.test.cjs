@@ -2,6 +2,84 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('./helpers.cjs');
 
+test('save confirmations expire, new messages reset the timer and failures stay visible', () => {
+  const app = createApp();
+  const status = app.elements.get('saveStatus');
+  assert.equal(status.textContent, 'Autosave ready');
+  assert.equal(status.classList.contains('show'), true);
+  app.flushTimers();
+  assert.equal(status.classList.contains('show'), false);
+  app.run('saveNow();');
+  assert.equal(status.textContent, 'Saved');
+  assert.equal(status.classList.contains('show'), true);
+  app.run('setSaveStatus("Saving…");');
+  app.flushTimers();
+  assert.equal(status.classList.contains('show'), true);
+  app.run('setSaveStatus("Save failed — export a backup", true);');
+  app.flushTimers();
+  assert.equal(status.classList.contains('show'), true);
+  assert.equal(status.classList.contains('error'), true);
+  app.run('saveNow();');
+  assert.equal(status.classList.contains('error'), false);
+  app.flushTimers();
+  assert.equal(status.classList.contains('show'), false);
+});
+
+test('mouse panels hide, reveal independently at their edges and stay open during use', () => {
+  const app = createApp({hasHover:true});
+  const rail = app.elements.get('toolrail'), strip = app.elements.get('pagestrip');
+  rail.getBoundingClientRect = () => ({left:14,right:72,top:100,bottom:600});
+  strip.getBoundingClientRect = () => ({left:480,right:800,top:610,bottom:708});
+  const move = (clientX, clientY, extra = {}) => {
+    const e = {clientX,clientY,pointerType:'mouse',buttons:0,target:app.elements.get('board'),...extra};
+    for (const cb of app.documentHandlers.pointermove) cb(e);
+  };
+  assert.equal(app.document.body.classList.contains('auto-hide-panels'), true);
+  app.flushTimers();
+  assert.equal(rail.classList.contains('is-revealed'), false);
+  assert.equal(strip.classList.contains('is-revealed'), false);
+  move(5,300);
+  assert.equal(rail.classList.contains('is-revealed'), true);
+  assert.equal(strip.classList.contains('is-revealed'), false);
+  move(400,300);
+  move(60,300,{target:rail.children[0]});
+  app.flushTimers();
+  assert.equal(rail.classList.contains('is-revealed'), true);
+  move(500,715);
+  assert.equal(strip.classList.contains('is-revealed'), true);
+  move(600,650,{target:strip});
+  app.flushTimers();
+  assert.equal(rail.classList.contains('is-revealed'), false);
+  assert.equal(strip.classList.contains('is-revealed'), true);
+  move(400,300);
+  app.flushTimers();
+  assert.equal(strip.classList.contains('is-revealed'), false);
+  move(5,715,{buttons:1});
+  move(5,715,{pointerType:'pen'});
+  move(5,715,{pointerType:'touch'});
+  assert.equal(rail.classList.contains('is-revealed'), false);
+  assert.equal(strip.classList.contains('is-revealed'), false);
+  app.run('action = { kind: "draw" };');
+  move(5,715);
+  assert.equal(rail.classList.contains('is-revealed'), false);
+  assert.equal(strip.classList.contains('is-revealed'), false);
+});
+
+test('touch panels remain visible and changing input mode cancels pending hiding', () => {
+  const app = createApp();
+  assert.equal(app.document.body.classList.contains('auto-hide-panels'), false);
+  const change = matches => {
+    app.hoverMedia.matches = matches;
+    app.hoverMedia.handlers.change.forEach(cb => cb());
+  };
+  change(true);
+  assert.equal(app.document.body.classList.contains('auto-hide-panels'), true);
+  change(false);
+  app.flushTimers();
+  assert.equal(app.document.body.classList.contains('auto-hide-panels'), false);
+  for (const id of ['toolrail','pagestrip']) assert.equal(app.elements.get(id).classList.contains('is-revealed'), true);
+});
+
 test('startup shows only pen controls and selecting text exposes its controls', () => {
   const app = createApp();
   for (const id of ['fillRow', 'fontRow', 'noteRow']) assert.equal(app.elements.get(id).style.display, 'none');

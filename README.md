@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.2.4-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.3.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -40,7 +40,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
-- **v1.2.4 Reliability Update**: Validated notebook restores, recoverable image assets, draft-aware saves with a persistent status indicator, selection controls that preserve drawing defaults, and accessible controls that remain reachable on mobile.
+- **v1.3.0 Canvas Space Update**: Tools and pages automatically hide on mouse devices and reveal at the left and bottom edges. Keyboard focus reveals controls, touch controls remain visible, and save confirmations briefly appear at the bottom left.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -48,13 +48,13 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Drag & Drop**: Drop image files (`.png`, `.jpg`, `.webp`, `.svg`) directly onto the board.
 
 ### 💾 Autosave, Export & Portable JSON Backup
-- **Automatic Persistence**: Debounced `localStorage` autosave, including text drafts, with a persistent save status and retry after storage failures. Images needed by Undo/Redo remain available.
+- **Automatic Persistence**: Debounced `localStorage` autosave, including text drafts, with brief bottom-left save confirmations, persistent failure messages, and retry after storage failures. Images needed by Undo/Redo remain available.
 - **2× High-Resolution PNG Export**: One-click raster export cropped tightly to content bounding box with date & time timestamped filenames.
 - **JSON Backup & Restore**: Export your entire notebook as a `.json` backup file with date & time timestamps or import existing backups across devices.
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.2.4`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.3.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
