@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.4.0
+   Version: 1.4.1
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -40,7 +40,6 @@ const state = {
   color: MARKERS[0],
   custom: null,          // last custom colour picked
   size: 4,
-  opacity: 1,
   fontSize: 28,
   noteColor: NOTES[0],
   fill: false,           // light tint fill for rect / ellipse
@@ -1102,7 +1101,6 @@ canvas.addEventListener('pointerdown', e => {
         type: 'stroke',
         mode: t === 'pen' ? 'pen' : 'hi',
         color: state.color,
-        opacity: state.opacity,
         width: t === 'pen' ? state.size : Math.max(12, state.size * 3.5),
         points: [{ x: w.x, y: w.y, w: 1 }]
       },
@@ -1344,7 +1342,6 @@ function tempShapeObj() {
     type: a.kind,
     x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1,
     color: state.color,
-    opacity: state.opacity,
     width: Math.max(1, state.size),
     fill: state.fill
   };
@@ -1358,7 +1355,6 @@ function commitShape(a) {
     type: a.kind,
     x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1,
     color: state.color,
-    opacity: state.opacity,
     width: Math.max(1, state.size),
     fill: state.fill
   });
@@ -1413,7 +1409,7 @@ function fillAt(clientX, clientY) {
     if (hex.length <= 4) hex = [...hex].map(ch => ch + ch).join('');
     const rgba = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
     rgba.push(hex.length === 8 ? parseInt(hex.slice(6, 8), 16) : 255);
-    if (state.opacity === 1 && region.target.every((value, i) => Math.abs(value - rgba[i]) <= 1)) return;
+    if (region.target.every((value, i) => Math.abs(value - rgba[i]) <= 1)) return;
     const layer = document.createElement('canvas');
     layer.width = region.maxX - region.minX + 1;
     layer.height = region.maxY - region.minY + 1;
@@ -1426,7 +1422,7 @@ function fillAt(clientX, clientY) {
     }
     lc.putImageData(pixels, 0, 0);
     const imgId = uid();
-    const obj = { id: uid(), type: 'image', imgId, opacity: state.opacity,
+    const obj = { id: uid(), type: 'image', imgId,
       x: (region.minX / scale - v.panX) / v.zoom, y: (region.minY / scale - v.panY) / v.zoom,
       w: layer.width / (scale * v.zoom), h: layer.height / (scale * v.zoom) };
     if (!hasValidGeometry(obj)) { toast('Move closer to the centre of the board to fill'); return; }
@@ -1482,7 +1478,7 @@ function updateCursorOverlays(e) {
     brush.style.display = 'block';
     brush.style.width = brush.style.height = diameter + 'px';
     brush.style.color = state.color;
-    brush.style.setProperty('--brush-opacity', state.opacity * (state.tool === 'highlighter' ? 0.42 : 1));
+    brush.style.setProperty('--brush-opacity', state.tool === 'highlighter' ? 0.42 : 1);
     brush.style.transform = `translate(${e.clientX - diameter / 2}px,${e.clientY - diameter / 2}px)`;
   } else brush.style.display = 'none';
   if (state.tool === 'eraser' && !spaceHeld) {
@@ -1876,7 +1872,7 @@ function nudge(dx, dy) {
    8. TEXT & STICKY EDITING
    ================================================================ */
 function createDraftText(x, y) {
-  const o = { id: uid(), type: 'text', x, y, color: state.color, opacity: state.opacity, fontSize: state.fontSize, lines: [''] };
+  const o = { id: uid(), type: 'text', x, y, color: state.color, fontSize: state.fontSize, lines: [''] };
   openEditor(o, 'text', true);
 }
 
@@ -1983,7 +1979,6 @@ function createStickyFrom(a) {
     type: 'sticky',
     x, y, w, h,
     color: state.noteColor,
-    opacity: state.opacity,
     fontSize: clamp(Math.round(Math.sqrt(w * h) / 6.5), 16, 40),
     text: ''
   };
@@ -2879,6 +2874,14 @@ const toolSizes = { pen: 4, highlighter: 4, eraser: 4, line: 4, rect: 4, ellipse
 function syncToolbarLayout() {
   const bar = $('topbar');
   if (bar.getBoundingClientRect && document.documentElement) {
+    // Extra controls from mixed selections get a deliberate second row too.
+    bar.classList.remove('is-wrapped');
+    if (window.innerWidth > 1350) {
+      const controls = ['historyGroup', 'ctxGroup', 'bgGroup', 'zoomGroup', 'actionsGroup']
+        .map($).filter(el => el.getClientRects().length);
+      const top = Math.min(...controls.map(el => el.getBoundingClientRect().top));
+      bar.classList.toggle('is-wrapped', controls.some(el => el.getBoundingClientRect().top > top + 12));
+    }
     document.documentElement.style.setProperty('--toolbar-bottom', (bar.getBoundingClientRect().bottom + 12) + 'px');
   }
 }
@@ -2886,7 +2889,7 @@ window.addEventListener('resize', syncToolbarLayout);
 
 function updateSelectedProperty(property, value, predicate = () => true) {
   if (state.tool !== 'select') return;
-  const selected = getSelectedObjects().filter(o => predicate(o) && (o[property] !== undefined || property === 'opacity') && (property === 'opacity' ? o.opacity ?? 1 : o[property]) !== value);
+  const selected = getSelectedObjects().filter(o => predicate(o) && o[property] !== undefined && o[property] !== value);
   if (!selected.length) return;
   finishGesture({ cancel: true });
   resetNudgeGroup();
@@ -2991,7 +2994,6 @@ function refreshContextUI() {
   const fr = t === 'select' ? !!fontObject : t === 'text';
   const nr = t === 'select' ? !!noteObject : t === 'sticky';
   const fl = t === 'select' ? !!fillObject : t === 'rect' || t === 'ellipse';
-  const op = t === 'select' ? selected.length > 0 : ['pen', 'highlighter', 'text', 'sticky', 'bucket'].includes(t) || shapeish;
   const show = (id, on) => { $(id).style.display = on ? '' : 'none'; };
 
   setColor(inkObject ? inkObject.color : state.color, false);
@@ -3001,9 +3003,6 @@ function refreshContextUI() {
   $('widthRange').value = size;
   $('widthVal').textContent = Math.round(size * 10) / 10;
   $('fontVal').textContent = fontObject ? fontObject.fontSize : state.fontSize;
-  const opacity = selected.length ? selected[0].opacity ?? 1 : state.opacity;
-  $('opacityRange').value = Math.round(opacity * 100);
-  $('opacityVal').textContent = Math.round(opacity * 100) + '%';
   const fill = fillObject ? !!fillObject.fill : state.fill;
   $('fillBtn').classList.toggle('on', fill);
   $('fillBtn').setAttribute('aria-pressed', String(fill));
@@ -3023,8 +3022,7 @@ function refreshContextUI() {
   show('fontRow', fr);
   show('noteRow', nr);
   show('fillRow', fl);
-  show('opacityRow', op);
-  show('ctxGroup', sw || wr || fr || nr || fl || op);
+  show('ctxGroup', sw || wr || fr || nr || fl);
   canvas.style.cursor = CURSORS[t] || 'default';
   if (canvasPointerType) updateCursorOverlays({ ...lastPtr, clientX: lastPtr.x, clientY: lastPtr.y, pointerType: canvasPointerType });
   requestAnimationFrame(syncToolbarLayout);
@@ -3133,6 +3131,7 @@ function toggleHelp(force) {
 function bindUI() {
   document.querySelectorAll('button').forEach(b => {
     const label = b.dataset.tip || b.title;
+    if (b.dataset.tip && !b.title) b.title = b.dataset.tip;
     if (label && !b.getAttribute('aria-label')) b.setAttribute('aria-label', label);
   });
   document.querySelectorAll('button svg').forEach(icon => {
@@ -3167,11 +3166,6 @@ function bindUI() {
 
   $('widthRange').addEventListener('input', e => {
     updateStrokeSize(+e.target.value);
-  });
-  $('opacityRange').addEventListener('input', e => {
-    const opacity = clamp(Number(e.target.value) / 100, 0.01, 1);
-    if (state.tool === 'select') updateSelectedProperty('opacity', opacity);
-    else { state.opacity = opacity; refreshContextUI(); }
   });
 
   $('widthRow').addEventListener('wheel', e => {

@@ -104,7 +104,7 @@ test('pins persist independently, cancel hiding and survive rebuilding pages', (
   assert.equal(restored.elements.get('toolrail').classList.contains('is-revealed'), false);
 });
 
-test('brush cursor follows width, colour, opacity and zoom and hides off the board', () => {
+test('brush cursor follows width, colour and zoom, preserves highlighter transparency and hides off the board', () => {
   const app = createApp();
   const board = app.elements.get('board'), brush = app.elements.get('brushPreview');
   board.dispatch('pointermove',{pointerType:'mouse',clientX:300,clientY:300});
@@ -116,51 +116,47 @@ test('brush cursor follows width, colour, opacity and zoom and hides off the boa
   app.run('page().view.zoom = 2; chooseColor("#D93A3A"); refreshContextUI();');
   assert.equal(brush.style.width,'40px');
   assert.equal(brush.style.color,'#D93A3A');
-  app.elements.get('opacityRange').value = '30';
-  app.elements.get('opacityRange').dispatch('input');
-  assert.equal(brush.style['--brush-opacity'],0.3);
+  assert.equal(brush.style['--brush-opacity'],1);
   app.run('setTool("highlighter");');
   assert.equal(brush.style.width,'28px');
-  assert.equal(brush.style['--brush-opacity'],0.126);
+  assert.equal(brush.style['--brush-opacity'],0.42);
   board.dispatch('pointerleave');
   assert.equal(brush.style.display,'none');
   board.dispatch('pointerenter',{pointerType:'touch',clientX:300,clientY:300});
   assert.equal(brush.style.display,'none');
 });
 
-test('opacity edits legacy selections with undo without overwriting drawing opacity', () => {
+test('legacy transparent objects keep their appearance through selection edits and undo', () => {
   const app = createApp();
-  app.run(`state.opacity = 0.7;page().objects.push({id:'rect',type:'rect',x0:100,y0:100,x1:200,y1:200,width:4,color:'#23282F',fill:true});state.selectedIds=new Set(['rect']);setTool('select');`);
-  app.elements.get('opacityRange').value = '40';
-  app.elements.get('opacityRange').dispatch('input');
+  app.run(`page().objects.push({id:'rect',type:'rect',x0:100,y0:100,x1:200,y1:200,width:4,color:'#23282F',fill:true,opacity:0.4});state.selectedIds=new Set(['rect']);setTool('select');chooseColor('#D93A3A');`);
   assert.equal(app.run('page().objects[0].opacity'),0.4);
-  assert.equal(app.run('state.opacity'),0.7);
   app.run('drawObject(ctx,page().objects[0]);');
   assert.equal(app.context.operations.findLast(o=>o.name==='strokeRect').alpha,0.4);
   assert.equal(app.context.operations.findLast(o=>o.name==='fillRect').alpha,0.06);
   assert.equal(app.context.globalAlpha,1);
   app.run('undo();');
-  assert.equal(app.run('page().objects[0].opacity'),undefined);
+  assert.equal(app.run('page().objects[0].opacity'),0.4);
+  assert.equal(app.run('page().objects[0].color'),'#23282F');
   app.run('redo();restoreBoard(serializeBoard());');
   assert.equal(app.run('page().objects[0].opacity'),0.4);
+  assert.equal(app.run('page().objects[0].color'),'#D93A3A');
 });
 
-test('new pen, shape, text and sticky marks capture drawing opacity', () => {
+test('new pen, shape, text and sticky marks use their normal opacity', () => {
   const app = createApp();
   const board = app.elements.get('board');
   const pointer = (name,x,y) => board.dispatch(name,{pointerId:1,pointerType:'mouse',button:0,clientX:x,clientY:y,timeStamp:1000});
-  app.run('state.opacity = 0.25;');
   pointer('pointerdown',300,300);pointer('pointerup',300,300);
-  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  assert.equal(app.run('page().objects.at(-1).opacity'),undefined);
   app.run('setTool("rect");');
   pointer('pointerdown',300,300);pointer('pointermove',400,400);pointer('pointerup',400,400);
-  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  assert.equal(app.run('page().objects.at(-1).opacity'),undefined);
   app.run('createDraftText(300,300);');
-  assert.equal(app.run('editing.obj.opacity'),0.25);
-  assert.equal(app.elements.get('textEditor').style.opacity,0.25);
-  app.elements.get('textEditor').value = 'Transparent text';
+  assert.equal(app.run('editing.obj.opacity'),undefined);
+  assert.equal(app.elements.get('textEditor').style.opacity,1);
+  app.elements.get('textEditor').value = 'Normal text';
   app.run('commitEditor();createStickyFrom({x0:300,y0:300,x1:500,y1:500,moved:true});');
-  assert.equal(app.run('page().objects.at(-1).opacity'),0.25);
+  assert.equal(app.run('page().objects.at(-1).opacity'),undefined);
   assert.equal(app.elements.get('textEditor').style.background,'transparent');
 });
 
