@@ -222,21 +222,21 @@ test('invalid structured clipboard input cannot partially add broken objects', (
   assert.deepEqual(app.json('page().objects'),[rect]);assert.equal(app.run('page().undo.length'),0);
 });
 
-test('PNG dimensions and pixel area stay bounded for widely spread content', () => {
-  const app=createApp();setObjects(app,[{...rect,x0:0,y0:0,x1:100000,y1:100000}]);app.run('exportPNG()');
+test('PNG dimensions and pixel area stay bounded for widely spread content', async () => {
+  const app=createApp();setObjects(app,[{...rect,x0:0,y0:0,x1:100000,y1:100000}]);await app.run('exportPNG()');
   const canvas=app.canvases.at(-1);
-  assert.ok(canvas.width<=8000&&canvas.height<=8000);
-  assert.ok(canvas.width*canvas.height<=16000000);
+  assert.ok(canvas.encodedWidth<=16000&&canvas.encodedHeight<=16000);
+  assert.ok(canvas.encodedWidth*canvas.encodedHeight<=64000000);
   assert.equal(app.elements.get('toast').textContent,'PNG downloaded');
 });
 
-test('PNG waits for images and handles null asynchronous encoding results', () => {
+test('PNG waits for images and handles null asynchronous encoding results', async () => {
   const app=createApp();restore(app);app.run('exportPNG()');
   assert.match(app.elements.get('toast').textContent,/finish loading/);
   app.images[0].load();
   const original=app.document.createElement;
   app.document.createElement=(tag)=>{const e=original(tag);if(tag==='canvas')e.toBlob=cb=>cb(null);return e;};
-  app.run('exportPNG()');assert.match(app.elements.get('toast').textContent,/Could not export PNG/);
+  await app.run('exportPNG()');assert.match(app.elements.get('toast').textContent,/Could not export PNG/);
 });
 
 test('an image import on an inactive page leaves the active text draft open', () => {

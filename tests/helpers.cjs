@@ -36,7 +36,7 @@ function createApp(options = {}) {
       click(){this.onclick?.({target:this,preventDefault(){},stopPropagation(){}});this.dispatch('click');},
       setSelectionRange(){},setPointerCapture(){},releasePointerCapture(){},hasPointerCapture(){return true;},
       getContext(){return context;},toDataURL(){return 'data:image/png;base64,aGVsbG8=';},
-      toBlob(callback){callback(new Blob(['png']));},
+      toBlob(callback){this.encodedWidth=this.width;this.encodedHeight=this.height;callback(new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')],{type:'image/png'}));},
       getBoundingClientRect(){return {x:0,y:0,left:0,top:0,right:1280,bottom:720,width:1280,height:720};},
       getClientRects(){return this.hidden||this.style.display==='none'?[]:[this.getBoundingClientRect()];},
       get isConnected(){return !!this.parentElement || this===document.body;},

@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.6.1
+   Version: 1.6.2
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.6.2';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -2523,25 +2523,57 @@ window.addEventListener('paste', e => {
 /* ================================================================
    11. PNG EXPORT & JSON BACKUP / RESTORE
    ================================================================ */
-function exportPNG() {
+function pngExportPlan(bounds) {
+  const pad = 48;
+  const w = bounds ? bounds.w + pad * 2 : 1280;
+  const h = bounds ? bounds.h + pad * 2 : 800;
+  // Render at 300 DPI by default, increasing toward 384 DPI on larger boards.
+  const targetScale = 300 / 96 + clamp((Math.max(w, h) - 1600) / 2400, 0, 1) * (4 - 300 / 96);
+  const maxPixels = navigator.deviceMemory && navigator.deviceMemory <= 4 ? 32000000 : 64000000;
+  const scale = Math.min(targetScale, 16000 / w, 16000 / h, Math.sqrt(maxPixels / (w * h)));
+  return { w, h, scale, dpi: Math.round(targetScale * 96),
+    x: bounds ? pad - bounds.x : 0, y: bounds ? pad - bounds.y : 0 };
+}
+
+async function pngWithDpi(blob, dpi) {
+  const header = new Uint8Array(await blob.slice(0, 33).arrayBuffer());
+  const signature = [137,80,78,71,13,10,26,10];
+  if (header.length !== 33 || signature.some((v, i) => header[i] !== v) ||
+      new DataView(header.buffer).getUint32(8) !== 13 || String.fromCharCode(...header.slice(12,16)) !== 'IHDR') throw new Error('Invalid PNG header');
+  const chunk = new Uint8Array(21), view = new DataView(chunk.buffer);
+  view.setUint32(0, 9);
+  chunk.set([112,72,89,115], 4); // pHYs: physical pixel density, in pixels per metre.
+  const density = Math.round(dpi / .0254);
+  view.setUint32(8, density); view.setUint32(12, density); chunk[16] = 1;
+  let crc = 0xFFFFFFFF;
+  for (const byte of chunk.subarray(4,17)) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+  }
+  view.setUint32(17, (crc ^ 0xFFFFFFFF) >>> 0);
+  const parts = [blob.slice(0,33), chunk];
+  // Read only chunk headers; keep the compressed image bytes in Blob slices.
+  for (let offset = 33; offset + 12 <= blob.size;) {
+    const info = new Uint8Array(await blob.slice(offset, offset + 8).arrayBuffer());
+    const size = new DataView(info.buffer).getUint32(0);
+    const type = String.fromCharCode(...info.subarray(4,8));
+    const next = offset + size + 12;
+    if (next > blob.size) throw new Error('Invalid PNG chunk');
+    if (type === 'IDAT') return new Blob([...parts, blob.slice(offset)], { type:'image/png' });
+    if (type !== 'pHYs') parts.push(blob.slice(offset,next));
+    offset = next;
+  }
+  throw new Error('PNG image data missing');
+}
+
+let pngExportBusy = false;
+async function exportPNG() {
+  if (pngExportBusy) return;
   finishGesture({ cancel: true });
   commitEditor();
   const p = page();
   const b = contentBounds(p.objects);
-  const pad = 48;
-  let W, H, view;
-  if (b) {
-    const MAXS = 8000, MAXPIXELS = 16000000;
-    const needW = b.w + pad * 2, needH = b.h + pad * 2;
-    const sc = Math.min(2, MAXS / needW, MAXS / needH, Math.sqrt(MAXPIXELS / (needW * needH)));
-    W = Math.max(1, Math.floor(needW * sc));
-    H = Math.max(1, Math.floor(needH * sc));
-    view = { zoom: sc, panX: (pad - b.x) * sc, panY: (pad - b.y) * sc };
-  } else {
-    W = 1280;
-    H = 800;
-    view = { zoom: 1, panX: 0, panY: 0 };
-  }
+  const plan = pngExportPlan(b), objects = snapshot(p), bg = p.bg, generation = boardGeneration;
   const fname = `brightboard-p${state.pageIndex + 1}-${getTimestamp()}.png`;
   const deliver = url => {
     const a = document.createElement('a');
@@ -2553,29 +2585,43 @@ function exportPNG() {
     setTimeout(() => { if (url.startsWith('blob:')) URL.revokeObjectURL(url); }, 5000);
     toast('PNG downloaded');
   };
+  if (objects.some(o => o.type === 'image' && (!IMG.has(o.imgId) || IMG.get(o.imgId).status === 'error'))) {
+    toast('An image could not load — export JSON to keep its source'); return;
+  }
+  if (objects.some(o => o.type === 'image' && IMG.get(o.imgId)?.status === 'loading')) {
+    toast('Wait for images to finish loading before exporting PNG'); return;
+  }
+  pngExportBusy = true;
+  $('exportBtn').disabled = true;
+  $('exportBtn').setAttribute('aria-busy', 'true');
   try {
-    if (p.objects.some(o => o.type === 'image' && (!IMG.has(o.imgId) || IMG.get(o.imgId).status === 'error'))) {
-      toast('An image could not load — export JSON to keep its source');
-      return;
-    }
-    if (p.objects.some(o => o.type === 'image' && IMG.get(o.imgId)?.status === 'loading')) {
-      toast('Wait for images to finish loading before exporting PNG');
-      return;
-    }
-    const oc = document.createElement('canvas');
-    oc.width = W;
-    oc.height = H;
-    const octx = oc.getContext('2d');
-    if (!octx) throw new Error('Canvas unavailable');
-    paintBoard(octx, W, H, view, p.bg, p.objects, null);
-    oc.toBlob(blob => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let oc;
       try {
-        if (!blob) throw new Error('PNG encoding failed');
+        if (generation !== boardGeneration) throw new Error('Notebook replaced during export');
+        const scale = plan.scale / 2 ** attempt;
+        const W = Math.max(1, Math.floor(plan.w * scale)), H = Math.max(1, Math.floor(plan.h * scale));
+        oc = document.createElement('canvas');
+        oc.width = W; oc.height = H;
+        const octx = oc.getContext('2d');
+        if (!octx) throw new Error('Canvas unavailable');
+        paintBoard(octx, W, H, {zoom:scale,panX:plan.x*scale,panY:plan.y*scale}, bg, objects, null);
+        const encoded = await new Promise(resolve => oc.toBlob(resolve, 'image/png'));
+        oc.width = oc.height = 1; // Release the render buffer before adding metadata or retrying.
+        if (!encoded) throw new Error('PNG encoding failed');
+        const blob = await pngWithDpi(encoded, plan.dpi);
         deliver(URL.createObjectURL(blob));
-      } catch (_) { toast('Could not export PNG — try a smaller page or export JSON'); }
-    }, 'image/png');
-  } catch (err) {
+        return;
+      } catch (_) {
+        if (oc) oc.width = oc.height = 1;
+        if (generation !== boardGeneration) break;
+      }
+    }
     toast('Could not export PNG — try a smaller page or export JSON');
+  } finally {
+    pngExportBusy = false;
+    $('exportBtn').disabled = false;
+    $('exportBtn').setAttribute('aria-busy', 'false');
   }
 }
 

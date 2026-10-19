@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.6.1-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.6.2-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -45,7 +45,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
-- **v1.6.1 Hover Shape Drawer**: Hover over Shapes to reveal the 28 icon-only choices, then move into the drawer to select one. The drawer stays open during that movement and closes after the pointer leaves. Hovering preserves keyboard focus; click, tap and keyboard access remain available. The toolbox stays visible while the drawer is open.
+- **v1.6.2 Sharper PNG Downloads**: PNG exports render at a higher resolution that increases with board size, with 300–384 DPI print metadata and automatic fallback on constrained browsers. Hover over Shapes for the 28 icon-only choices; click, tap and keyboard access remain available.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -54,12 +54,12 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 
 ### 💾 Autosave, Export & Portable JSON Backup
 - **Automatic Persistence**: Debounced `localStorage` autosave, including text drafts, with brief bottom-left save confirmations, persistent failure messages, and retry after storage failures. Images needed by Undo/Redo remain available.
-- **2× High-Resolution PNG Export**: One-click raster export cropped tightly to content bounding box with date & time timestamped filenames.
+- **Adaptive High-Resolution PNG Export**: Render from vector content at 3.125× to 4×, increasing with drawing size, and embed 300–384 DPI print metadata. Exports retain their aspect ratio and padding, up to 16,000 pixels per side and 64 megapixels (32 megapixels on devices reporting 4 GB RAM or less). Browsers that cannot encode the full image automatically retry at lower resolutions. Filename timestamps and content cropping are preserved.
 - **JSON Backup & Restore**: Export your entire notebook as a `.json` backup file with date & time timestamps or import existing backups across devices.
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.6.1`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.6.2`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
