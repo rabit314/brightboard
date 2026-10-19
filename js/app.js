@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.5.1
+   Version: 1.6.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -30,6 +30,52 @@ const HIST_MAX = 30;
 const TH_W = 144, TH_H = 81;
 const SAVE_KEY = 'brightboard.board.v1';
 const RECOVERY_KEY = 'brightboard.recovery.v1';
+
+function polygonPath(points) {
+  return points.map(([x, y], i) => [i ? 'L' : 'M', x, y]).concat([['Z']]);
+}
+function radialPath(sides, inner = null, start = -Math.PI / 2) {
+  const count = inner === null ? sides : sides * 2;
+  const points = Array.from({ length: count }, (_, i) => {
+    const r = inner !== null && i % 2 ? inner : 1;
+    const a = start + i * Math.PI * 2 / count;
+    return [Math.cos(a) * r, Math.sin(a) * r];
+  });
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return polygonPath(points.map(p => [(p[0] - x) / (Math.max(...xs) - x), (p[1] - y) / (Math.max(...ys) - y)]));
+}
+// Unit paths power both the drawer icons and the canvas geometry.
+const SHAPE_DEFS = {
+  roundRect: { label: 'Rounded rectangle', path: [['M',.18,0],['L',.82,0],['Q',1,0,1,.18],['L',1,.82],['Q',1,1,.82,1],['L',.18,1],['Q',0,1,0,.82],['L',0,.18],['Q',0,0,.18,0],['Z']] },
+  capsule: { label: 'Capsule', path: [['M',.25,0],['L',.75,0],['C',1.08,0,1.08,1,.75,1],['L',.25,1],['C',-.08,1,-.08,0,.25,0],['Z']] },
+  triangle: { label: 'Triangle', path: polygonPath([[.5,0],[1,1],[0,1]]) },
+  rightTriangle: { label: 'Right triangle', path: polygonPath([[0,0],[1,1],[0,1]]) },
+  diamond: { label: 'Diamond', path: polygonPath([[.5,0],[1,.5],[.5,1],[0,.5]]) },
+  pentagon: { label: 'Pentagon', path: radialPath(5) },
+  hexagon: { label: 'Hexagon', path: radialPath(6, null, 0) },
+  octagon: { label: 'Octagon', path: radialPath(8, null, Math.PI / 8) },
+  trapezoid: { label: 'Trapezoid', path: polygonPath([[.22,0],[.78,0],[1,1],[0,1]]) },
+  parallelogram: { label: 'Parallelogram', path: polygonPath([[.25,0],[1,0],[.75,1],[0,1]]) },
+  star: { label: 'Five-point star', path: radialPath(5, .44) },
+  star4: { label: 'Four-point star', path: radialPath(4, .28) },
+  star6: { label: 'Six-point star', path: radialPath(6, .5) },
+  heart: { label: 'Heart', path: [['M',.5,.94],['C',.35,.8,.03,.59,.04,.31],['C',.05,.04,.38,.01,.5,.25],['C',.62,.01,.95,.04,.96,.31],['C',.97,.59,.65,.8,.5,.94],['Z']] },
+  plus: { label: 'Plus', path: polygonPath([[.34,0],[.66,0],[.66,.34],[1,.34],[1,.66],[.66,.66],[.66,1],[.34,1],[.34,.66],[0,.66],[0,.34],[.34,.34]]) },
+  cross: { label: 'Cross', path: polygonPath([[.2,0],[.5,.3],[.8,0],[1,.2],[.7,.5],[1,.8],[.8,1],[.5,.7],[.2,1],[0,.8],[.3,.5],[0,.2]]) },
+  lightning: { label: 'Lightning bolt', path: polygonPath([[.54,0],[.08,.55],[.42,.55],[.3,1],[.94,.38],[.59,.38],[.72,0]]) },
+  chevron: { label: 'Chevron', path: polygonPath([[0,0],[.6,0],[1,.5],[.6,1],[0,1],[.4,.5]]) },
+  blockArrow: { label: 'Block arrow', path: polygonPath([[0,.3],[.6,.3],[.6,0],[1,.5],[.6,1],[.6,.7],[0,.7]]) },
+  doubleArrow: { label: 'Double-headed block arrow', path: polygonPath([[0,.5],[.3,0],[.3,.3],[.7,.3],[.7,0],[1,.5],[.7,1],[.7,.7],[.3,.7],[.3,1]]) },
+  speechBubble: { label: 'Speech bubble', path: [['M',.16,.08],['L',.84,.08],['Q',.96,.08,.96,.2],['L',.96,.66],['Q',.96,.78,.84,.78],['L',.42,.78],['L',.2,.96],['L',.23,.78],['L',.16,.78],['Q',.04,.78,.04,.66],['L',.04,.2],['Q',.04,.08,.16,.08],['Z']] },
+  cloud: { label: 'Cloud', path: [['M',.22,.82],['C',.02,.82,-.02,.56,.14,.47],['C',.08,.25,.3,.11,.43,.25],['C',.55,.02,.83,.12,.83,.36],['C',1.05,.34,1.08,.67,.9,.75],['C',.85,.93,.64,.95,.54,.84],['C',.43,.98,.25,.97,.22,.82],['Z']] },
+  semicircle: { label: 'Semicircle', path: [['M',0,1],['C',0,.448,.224,0,.5,0],['C',.776,0,1,.448,1,1],['Z']] },
+  arc: { label: 'Arc', path: [['M',0,1],['C',0,.448,.224,0,.5,0],['C',.776,0,1,.448,1,1]], open: true },
+};
+const SHAPE_TOOLS = ['line', 'rect', 'ellipse', 'arrow', ...Object.keys(SHAPE_DEFS)];
+const isCustomShape = type => Object.prototype.hasOwnProperty.call(SHAPE_DEFS, type);
+const isShapeTool = type => SHAPE_TOOLS.includes(type);
+const canFillShape = type => type === 'rect' || type === 'ellipse' || (isCustomShape(type) && !SHAPE_DEFS[type].open);
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -54,7 +100,7 @@ const state = {
   size: 4,
   fontSize: 28,
   noteColor: NOTES[0],
-  fill: false,           // light tint fill for rect / ellipse
+  fill: false,           // light tint fill for closed shapes
   pageIndex: 0,
   selectedIds: new Set(),// multi-selection support
 };
@@ -123,6 +169,7 @@ const removeObject = id => {
 };
 
 const CURSORS = {
+  ...Object.fromEntries(SHAPE_TOOLS.map(type => [type, 'crosshair'])),
   select: 'default',
   pen: 'none',
   highlighter: 'none',
@@ -308,6 +355,7 @@ function drawObject(c, o) {
     case 'text':    drawTextObj(c, o); break;
     case 'image':   drawImageObj(c, o); break;
     case 'sticky':  drawSticky(c, o, false); break;
+    default: if (isCustomShape(o.type)) drawCustomShape(c, o);
   }
   c.restore();
 }
@@ -377,6 +425,38 @@ function drawStroke(c, o) {
     c.quadraticCurveTo(seg.cx, seg.cy, seg.x1, seg.y1);
     c.stroke();
   }
+}
+
+function traceShapePath(c, path, w, h) {
+  c.beginPath();
+  for (const [command, ...coords] of path) {
+    const values = coords.map((v, i) => v * (i % 2 ? h : w));
+    if (command === 'M') c.moveTo(...values);
+    else if (command === 'L') c.lineTo(...values);
+    else if (command === 'Q') c.quadraticCurveTo(...values);
+    else if (command === 'C') c.bezierCurveTo(...values);
+    else if (command === 'Z') c.closePath();
+  }
+}
+
+function drawCustomShape(c, o) {
+  const w = Math.abs(o.x1 - o.x0), h = Math.abs(o.y1 - o.y0);
+  c.save();
+  c.translate((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2);
+  c.rotate(o.angle || 0);
+  c.translate(-w / 2, -h / 2);
+  traceShapePath(c, SHAPE_DEFS[o.type].path, w, h);
+  c.strokeStyle = c.fillStyle = o.color;
+  c.lineWidth = Math.max(1, o.width);
+  c.lineJoin = c.lineCap = 'round';
+  if (o.fill && canFillShape(o.type)) {
+    const alpha = c.globalAlpha;
+    c.globalAlpha *= .15;
+    c.fill();
+    c.globalAlpha = alpha;
+  }
+  c.stroke();
+  c.restore();
 }
 
 function drawShape(c, o) {
@@ -878,8 +958,70 @@ function triangleHit(p, vertices, tol) {
   });
 }
 
+const shapeOutlines = new WeakMap();
+function shapeOutline(o) {
+  const w = Math.abs(o.x1 - o.x0), h = Math.abs(o.y1 - o.y0);
+  const key = `${o.type}:${w}:${h}`;
+  const cached = shapeOutlines.get(o);
+  if (cached?.key === key) return cached.points;
+  const points = [];
+  const tolerance = Math.max(.25, Math.max(w, h) / 1e6);
+  const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const flatten = (a, b, c, d, depth = 0) => {
+    if (depth >= 10 || Math.max(distSeg(b.x,b.y,a.x,a.y,d.x,d.y), distSeg(c.x,c.y,a.x,a.y,d.x,d.y)) <= tolerance) {
+      points.push(d); return;
+    }
+    const ab = midpoint(a,b), bc = midpoint(b,c), cd = midpoint(c,d);
+    const abc = midpoint(ab,bc), bcd = midpoint(bc,cd), mid = midpoint(abc,bcd);
+    flatten(a,ab,abc,mid,depth+1); flatten(mid,bcd,cd,d,depth+1);
+  };
+  for (const [command, ...coords] of SHAPE_DEFS[o.type].path) {
+    const ps = [];
+    for (let i = 0; i < coords.length; i += 2) ps.push({ x: coords[i] * w, y: coords[i + 1] * h });
+    const start = points[points.length - 1];
+    if (command === 'M' || command === 'L') points.push(ps[0]);
+    else if (command === 'C') flatten(start, ...ps);
+    else if (command === 'Q') {
+      const [control, end] = ps;
+      flatten(start, {x:start.x+(control.x-start.x)*2/3,y:start.y+(control.y-start.y)*2/3},
+        {x:end.x+(control.x-end.x)*2/3,y:end.y+(control.y-end.y)*2/3}, end);
+    } else if (command === 'Z') points.push(points[0]);
+  }
+  shapeOutlines.set(o, { key, points });
+  return points;
+}
+
+function customShapeBounds(o) {
+  const w = Math.abs(o.x1 - o.x0), h = Math.abs(o.y1 - o.y0);
+  const cx = (o.x0 + o.x1) / 2, cy = (o.y0 + o.y1) / 2;
+  const cos = Math.cos(o.angle || 0), sin = Math.sin(o.angle || 0);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  // Bézier curves stay inside the convex hull of their control points.
+  for (const [, ...coords] of SHAPE_DEFS[o.type].path) for (let i = 0; i < coords.length; i += 2) {
+    const dx = (coords[i] - .5) * w, dy = (coords[i + 1] - .5) * h;
+    const x = cx + dx * cos - dy * sin, y = cy + dx * sin + dy * cos;
+    minX = Math.min(minX,x); maxX = Math.max(maxX,x); minY = Math.min(minY,y); maxY = Math.max(maxY,y);
+  }
+  const pad = Math.max(1, o.width) / 2 + 3;
+  return { x:minX-pad, y:minY-pad, w:Math.max(6,maxX-minX+pad*2), h:Math.max(6,maxY-minY+pad*2) };
+}
+
+function customShapeHit(o, local, tol) {
+  const points = shapeOutline(o);
+  const error = Math.max(.5, Math.max(Math.abs(o.x1-o.x0),Math.abs(o.y1-o.y0)) / 1e6);
+  const radius = tol + Math.max(1,o.width)/2 + 4 + error;
+  let inside = false;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i-1], b = points[i];
+    if (distSeg(local.x,local.y,a.x,a.y,b.x,b.y) <= radius) return true;
+    if ((a.y > local.y) !== (b.y > local.y) && local.x < (b.x-a.x)*(local.y-a.y)/(b.y-a.y)+a.x) inside = !inside;
+  }
+  return !SHAPE_DEFS[o.type].open && inside;
+}
+
 function boundsOf(o) {
   if (!o) return null;
+  if (isCustomShape(o.type)) return customShapeBounds(o);
   switch (o.type) {
     case 'stroke': {
       if (!o.points || !o.points.length) return null;
@@ -1010,6 +1152,7 @@ function objectHit(o, p, tol) {
     };
   }
 
+  if (isCustomShape(o.type)) return customShapeHit(o, {x:tp.x-(cx-w/2),y:tp.y-(cy-h/2)}, t);
   const s = 4 + t + (o.type === 'rect' || o.type === 'ellipse' ? Math.max(1, o.width) / 2 : 0);
   if (o.type === 'ellipse') {
     const rx = w / 2 + s, ry = h / 2 + s;
@@ -1146,7 +1289,7 @@ canvas.addEventListener('pointerdown', e => {
   } else if (t === 'eraser') {
     action = { type: 'erase', snapped: false, last: w };
     eraseAt(w, action);
-  } else if (['line', 'rect', 'ellipse', 'arrow'].includes(t)) {
+  } else if (isShapeTool(t)) {
     action = { type: 'shape', kind: t, x0: w.x, y0: w.y, x1: w.x, y1: w.y };
   } else if (t === 'text') {
     action = { type: 'place', x: w.x, y: w.y, sx: e.clientX, sy: e.clientY, moved: false };
@@ -1805,7 +1948,7 @@ function doRotate(w, e, a) {
       o.y0 = cy + dx0 * sin + dy0 * cos;
       o.x1 = cx + dx1 * cos - dy1 * sin;
       o.y1 = cy + dx1 * sin + dy1 * cos;
-    } else if (o.type === 'rect' || o.type === 'ellipse') {
+    } else if (o.type === 'rect' || o.type === 'ellipse' || isCustomShape(o.type)) {
       const scx = (so.x0 + so.x1) / 2, scy = (so.y0 + so.y1) / 2;
       const sw = Math.abs(so.x1 - so.x0), sh = Math.abs(so.y1 - so.y0);
       const dx = scx - cx, dy = scy - cy;
@@ -2913,7 +3056,7 @@ function validateBoardObject(o, assets, ids) {
       if (!p || typeof p !== 'object') throw new Error('Invalid stroke point');
       return { x: validNumber(p.x), y: validNumber(p.y), w: validNumber(p.w ?? 1, 0.01, 10) };
     });
-  } else if (['line', 'rect', 'ellipse', 'arrow'].includes(o.type)) {
+  } else if (isShapeTool(o.type)) {
     ['x0','y0','x1','y1'].forEach(key => number(key)); number('width', 0.01, 1e6);
     if (o.fill !== undefined && typeof o.fill !== 'boolean') throw new Error('Invalid shape fill');
     obj.fill = !!o.fill;
@@ -2944,7 +3087,7 @@ function invalidateWrapCaches() {
 /* ================================================================
    14. UI WIRING & INTERACTION
    ================================================================ */
-const toolSizes = { pen: 4, highlighter: 4, eraser: 4, line: 4, rect: 4, ellipse: 4, arrow: 4 };
+const toolSizes = { pen: 4, highlighter: 4, eraser: 4, ...Object.fromEntries(SHAPE_TOOLS.map(type => [type, 4])) };
 
 function closeToolPopup(id, restoreFocus = false) {
   const popup = $(id);
@@ -3014,6 +3157,28 @@ function chooseColor(col) {
   } else {
     setColor(col);
   }
+}
+
+function buildShapeDrawer() {
+  const legacy = {
+    line: { label: 'Line', svg: '<path d="M3 21 21 3"/>' },
+    rect: { label: 'Rectangle', svg: '<rect x="3" y="3" width="18" height="18" rx="1"/>' },
+    ellipse: { label: 'Ellipse or circle', svg: '<circle cx="12" cy="12" r="9"/>' },
+    arrow: { label: 'Arrow', svg: '<path d="M3 21 21 3M11 3h10v10"/>' },
+  };
+  const grid = $('shapeGrid');
+  grid.innerHTML = '';
+  SHAPE_TOOLS.forEach(type => {
+    const def = legacy[type] || SHAPE_DEFS[type];
+    const b = document.createElement('button');
+    b.className = 'tbtn';
+    b.dataset.tool = type;
+    b.setAttribute('aria-label', def.label);
+    b.setAttribute('aria-pressed', 'false');
+    const d = def.path?.map(([command, ...coords]) => command + coords.map(v => Math.round((3 + v * 18) * 1000) / 1000).join(' ')).join(' ');
+    b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${legacy[type]?.svg || `<path d="${d}"/>`}</svg>`;
+    grid.appendChild(b);
+  });
 }
 
 function buildSwatches() {
@@ -3094,7 +3259,7 @@ function setTool(t) {
       b.classList.toggle('active', active);
       b.setAttribute('aria-pressed', String(active));
     });
-  const shape = ['line', 'rect', 'ellipse', 'arrow'].includes(t);
+  const shape = isShapeTool(t);
   $('shapesBtn').classList.toggle('active', shape);
   $('shapesBtn').setAttribute('aria-label', shape ? `Shapes: ${t}` : 'Shapes');
   closeToolPopup('shapeDrawer');
@@ -3120,17 +3285,17 @@ function refreshContextUI() {
   $('selGroup').disabled = locked || allSelected.length < 2 || !!oneGroup;
   $('selUngroup').disabled = locked || !allSelected.some(o => o.groupId);
   ['selFront','selBack','selDel'].forEach(id => { $(id).disabled = !selected.length; });
-  const shapeish = ['line', 'rect', 'ellipse', 'arrow'].includes(t);
+  const shapeish = isShapeTool(t);
   const inkObject = selected.find(o => o.color !== undefined && o.type !== 'sticky');
   const widthObject = selected.find(o => o.width !== undefined);
   const fontObject = selected.find(o => o.fontSize !== undefined);
   const noteObject = selected.find(o => o.type === 'sticky');
-  const fillObject = selected.find(o => o.fill !== undefined);
+  const fillObject = selected.find(o => canFillShape(o.type));
   const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text', 'bucket'].includes(t) || shapeish;
   const wr = t === 'select' ? !!widthObject : ['pen', 'highlighter', 'eraser'].includes(t) || shapeish;
   const fr = t === 'select' ? !!fontObject : t === 'text';
   const nr = t === 'select' ? !!noteObject : t === 'sticky';
-  const fl = t === 'select' ? !!fillObject : t === 'rect' || t === 'ellipse';
+  const fl = t === 'select' ? !!fillObject : canFillShape(t);
   const show = (id, on) => { $(id).style.display = on ? '' : 'none'; };
 
   setColor(inkObject ? inkObject.color : state.color, false);
@@ -3348,7 +3513,7 @@ function bindUI() {
 
   $('fillBtn').onclick = () => {
     const fill = !$('fillBtn').classList.contains('on');
-    if (state.tool === 'select') updateSelectedProperty('fill', fill);
+    if (state.tool === 'select') updateSelectedProperty('fill', fill, o => canFillShape(o.type));
     else { state.fill = fill; refreshContextUI(); }
   };
 
@@ -3693,6 +3858,7 @@ function bindPanelAutoHide() {
 
 function boot() {
   resizeCanvas();
+  buildShapeDrawer();
   buildSwatches();
   buildNotePalette();
   bindUI();

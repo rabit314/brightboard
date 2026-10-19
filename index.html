@@ -150,7 +150,7 @@
   <button class="tbtn" data-tool="bucket" data-tip="Paint Bucket (B)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m8 3 8 8a2 2 0 0 1 0 2.8l-5.2 5.2a2 2 0 0 1-2.8 0l-5-5a2 2 0 0 1 0-2.8L10 4M3.5 12h13"/><path d="M20 13s-2.5 3.1-2.5 4.5a2.5 2.5 0 0 0 5 0C22.5 16.1 20 13 20 13Z" fill="currentColor" stroke="none"/></svg>
   </button>
-  <button class="tbtn" id="shapesBtn" data-tip="Shapes: line, rectangle, circle & arrow" aria-expanded="false" aria-controls="shapeDrawer">
+  <button class="tbtn" id="shapesBtn" data-tip="Shapes" aria-expanded="false" aria-controls="shapeDrawer">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="11" height="11" rx="2"/><circle cx="16" cy="16" r="6"/></svg>
   </button>
   <div class="rdiv"></div>
@@ -179,25 +179,8 @@
 </section>
 <section id="shapeDrawer" class="tool-popup" aria-label="Shape tools" hidden>
   <h3>Shapes</h3>
-  <div class="shape-grid">
-  <button class="tbtn" data-tool="line" data-tip="Straight Line (L)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 2 22"/></svg>
-    <span>Line <small>L</small></span>
-  </button>
-  <button class="tbtn" data-tool="rect" data-tip="Rectangle (R)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
-    <span>Rectangle <small>R</small></span>
-  </button>
-  <button class="tbtn" data-tool="ellipse" data-tip="Ellipse / Circle (O)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>
-    <span>Circle <small>O</small></span>
-  </button>
-  <button class="tbtn" data-tool="arrow" data-tip="Arrow (A)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-    <span>Arrow <small>A</small></span>
-  </button>
-  </div>
-  <p>Shift for squares, circles & snapped angles.</p>
+  <div class="shape-grid" id="shapeGrid"></div>
+  <p>Drag to draw. Hold Shift to constrain.</p>
 </section>
 
 <!-- ============ page strip ============ -->
@@ -208,7 +191,7 @@
 </div>
 
 <!-- ============ version badge (bottom-right) ============ -->
-<button id="versionBadge" title="BrightBoard v1.5.1 — Click for info">v1.5.1</button>
+<button id="versionBadge" title="BrightBoard v1.6.0 — Click for info">v1.6.0</button>
 <div id="saveStatus" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ============ floating selection action bar ============ -->
@@ -304,7 +287,7 @@
   </table>
   <h4>Tips & Features</h4>
   <ul>
-    <li>Open <b>Shapes</b> in the toolbox for lines, rectangles, circles and arrows. Use the <b>color dropdown</b> for more shades, or the rainbow picker for any color.</li>
+    <li>Open <b>Shapes</b> in the toolbox for 28 icon-only choices, including polygons, stars, hearts, arrows, bubbles and curves. Use the <b>color dropdown</b> for more shades, or the rainbow picker for any color.</li>
     <li><b>Group</b> multiple selected items to select and transform them together. Ungroup before editing individual members. Grouping existing groups combines them into one group.</li>
     <li><b>Lock</b> a selection to protect it from moving, resizing, rotating, erasing and property edits. Click a locked item and use the lock button to unlock it. Clear page still clears everything.</li>
     <li>Hold <b>Shift</b> while drawing shapes for perfect squares, circles and 15° snapped lines.</li>
