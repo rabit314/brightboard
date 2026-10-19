@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.6.2
+   Version: 1.7.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.7.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -45,8 +45,11 @@ function radialPath(sides, inner = null, start = -Math.PI / 2) {
   const x = Math.min(...xs), y = Math.min(...ys);
   return polygonPath(points.map(p => [(p[0] - x) / (Math.max(...xs) - x), (p[1] - y) / (Math.max(...ys) - y)]));
 }
+const BLOCK_ARROW_POINTS = [[0,.3],[.6,.3],[.6,0],[1,.5],[.6,1],[.6,.7],[0,.7]];
 // Unit paths power both the drawer icons and the canvas geometry.
 const SHAPE_DEFS = {
+  curve: { label: 'Curve', path: [['M',0,1],['C',.12,-.1,.36,-.1,.5,.5],['C',.64,1.1,.88,1.1,1,0]], open: true },
+  polygon: { label: 'Polygon', path: polygonPath([[.35,0],[.85,0],[.55,.72],[1,.72],[1,1],[0,1]]) },
   roundRect: { label: 'Rounded rectangle', path: [['M',.18,0],['L',.82,0],['Q',1,0,1,.18],['L',1,.82],['Q',1,1,.82,1],['L',.18,1],['Q',0,1,0,.82],['L',0,.18],['Q',0,0,.18,0],['Z']] },
   capsule: { label: 'Capsule', path: [['M',.25,0],['L',.75,0],['C',1.08,0,1.08,1,.75,1],['L',.25,1],['C',-.08,1,-.08,0,.25,0],['Z']] },
   triangle: { label: 'Triangle', path: polygonPath([[.5,0],[1,1],[0,1]]) },
@@ -65,14 +68,22 @@ const SHAPE_DEFS = {
   cross: { label: 'Cross', path: polygonPath([[.2,0],[.5,.3],[.8,0],[1,.2],[.7,.5],[1,.8],[.8,1],[.5,.7],[.2,1],[0,.8],[.3,.5],[0,.2]]) },
   lightning: { label: 'Lightning bolt', path: polygonPath([[.54,0],[.08,.55],[.42,.55],[.3,1],[.94,.38],[.59,.38],[.72,0]]) },
   chevron: { label: 'Chevron', path: polygonPath([[0,0],[.6,0],[1,.5],[.6,1],[0,1],[.4,.5]]) },
-  blockArrow: { label: 'Block arrow', path: polygonPath([[0,.3],[.6,.3],[.6,0],[1,.5],[.6,1],[.6,.7],[0,.7]]) },
+  blockArrow: { label: 'Right arrow', path: polygonPath(BLOCK_ARROW_POINTS) },
+  leftArrow: { label: 'Left arrow', path: polygonPath(BLOCK_ARROW_POINTS.map(([x,y]) => [1-x,y])) },
+  upArrow: { label: 'Up arrow', path: polygonPath(BLOCK_ARROW_POINTS.map(([x,y]) => [y,1-x])) },
+  downArrow: { label: 'Down arrow', path: polygonPath(BLOCK_ARROW_POINTS.map(([x,y]) => [1-y,x])) },
   doubleArrow: { label: 'Double-headed block arrow', path: polygonPath([[0,.5],[.3,0],[.3,.3],[.7,.3],[.7,0],[1,.5],[.7,1],[.7,.7],[.3,.7],[.3,1]]) },
   speechBubble: { label: 'Speech bubble', path: [['M',.16,.08],['L',.84,.08],['Q',.96,.08,.96,.2],['L',.96,.66],['Q',.96,.78,.84,.78],['L',.42,.78],['L',.2,.96],['L',.23,.78],['L',.16,.78],['Q',.04,.78,.04,.66],['L',.04,.2],['Q',.04,.08,.16,.08],['Z']] },
+  ovalBubble: { label: 'Oval callout', path: [['M',.32,.8],['C',.12,.74,0,.6,0,.42],['C',0,.18,.22,.02,.5,.02],['C',.78,.02,1,.18,1,.42],['C',1,.66,.78,.83,.5,.83],['L',.24,1],['L',.32,.8],['Z']] },
+  cloudBubble: { label: 'Cloud callout', path: [['M',.22,.77],['C',.05,.8,0,.65,.1,.53],['C',-.02,.4,.1,.21,.25,.27],['C',.23,.07,.46,0,.55,.18],['C',.68,.02,.91,.16,.85,.34],['C',1.05,.3,1.09,.55,.94,.64],['C',1.02,.82,.79,.95,.68,.8],['C',.6,.96,.36,.93,.34,.79],['L',.08,1],['L',.22,.77],['Z']] },
   cloud: { label: 'Cloud', path: [['M',.22,.82],['C',.02,.82,-.02,.56,.14,.47],['C',.08,.25,.3,.11,.43,.25],['C',.55,.02,.83,.12,.83,.36],['C',1.05,.34,1.08,.67,.9,.75],['C',.85,.93,.64,.95,.54,.84],['C',.43,.98,.25,.97,.22,.82],['Z']] },
   semicircle: { label: 'Semicircle', path: [['M',0,1],['C',0,.448,.224,0,.5,0],['C',.776,0,1,.448,1,1],['Z']] },
   arc: { label: 'Arc', path: [['M',0,1],['C',0,.448,.224,0,.5,0],['C',.776,0,1,.448,1,1]], open: true },
 };
-const SHAPE_TOOLS = ['line', 'rect', 'ellipse', 'arrow', ...Object.keys(SHAPE_DEFS)];
+const PAINT_SHAPE_TOOLS = ['line', 'curve', 'ellipse', 'rect', 'roundRect', 'polygon', 'triangle',
+  'rightTriangle', 'diamond', 'pentagon', 'hexagon', 'blockArrow', 'leftArrow', 'upArrow', 'downArrow',
+  'star4', 'star', 'star6', 'speechBubble', 'ovalBubble', 'cloudBubble', 'heart', 'lightning'];
+const SHAPE_TOOLS = [...PAINT_SHAPE_TOOLS, 'arrow', ...Object.keys(SHAPE_DEFS).filter(type => !PAINT_SHAPE_TOOLS.includes(type))];
 const isCustomShape = type => Object.prototype.hasOwnProperty.call(SHAPE_DEFS, type);
 const isShapeTool = type => SHAPE_TOOLS.includes(type);
 const canFillShape = type => type === 'rect' || type === 'ellipse' || (isCustomShape(type) && !SHAPE_DEFS[type].open);

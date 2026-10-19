@@ -16,13 +16,19 @@ function draw(app, type, reverse = false) {
 
 const newShapes = ['roundRect','capsule','triangle','rightTriangle','diamond','pentagon','hexagon','octagon',
   'trapezoid','parallelogram','star','star4','star6','heart','plus','cross','lightning','chevron',
-  'blockArrow','doubleArrow','speechBubble','cloud','semicircle','arc'];
+  'blockArrow','doubleArrow','speechBubble','cloud','semicircle','arc',
+  'curve','polygon','leftArrow','upArrow','downArrow','ovalBubble','cloudBubble'];
+const openShapes = new Set(['arc','curve']);
 
-test('drawer offers 28 accessible icon-only choices without visible labels or shortcut badges', () => {
+test('drawer offers 35 accessible icon-only choices without visible labels or shortcut badges', () => {
   const app = createApp();
   const buttons = app.elements.get('shapeGrid').children;
-  assert.equal(buttons.length,28);
-  assert.equal(new Set(buttons.map(b=>b.dataset.tool)).size,28);
+  assert.equal(buttons.length,35);
+  assert.equal(new Set(buttons.map(b=>b.dataset.tool)).size,35);
+  assert.deepEqual(buttons.slice(0,23).map(b=>b.dataset.tool),[
+    'line','curve','ellipse','rect','roundRect','polygon','triangle','rightTriangle','diamond','pentagon','hexagon',
+    'blockArrow','leftArrow','upArrow','downArrow','star4','star','star6','speechBubble','ovalBubble','cloudBubble','heart','lightning',
+  ]);
   for (const b of buttons) {
     assert.ok(b.getAttribute('aria-label'));
     assert.match(b.innerHTML,/<svg/);
@@ -44,12 +50,12 @@ for (const [i,type] of newShapes.entries()) {
     assert.equal(app.run('page().objects.length'),0);
     pointer(app,'pointerup',400,320);
     assert.equal(app.run('page().objects[0].type'),type);
-    assert.equal(app.elements.get('fillRow').style.display,type==='arc'?'none':'');
+    assert.equal(app.elements.get('fillRow').style.display,openShapes.has(type)?'none':'');
     const count = app.context.operations.length;
     app.run('drawObject(ctx,page().objects[0]);');
     const ops = app.context.operations.slice(count);
     assert.ok(ops.some(op=>op.name==='stroke'));
-    assert.equal(ops.some(op=>op.name==='fill'),type!=='arc');
+    assert.equal(ops.some(op=>op.name==='fill'),!openShapes.has(type));
     const p = app.json('shapeOutline(page().objects[0])[0]');
     assert.equal(app.run(`objectHit(page().objects[0],{x:${200+p.x},y:${200+p.y}},0)`),true);
     assert.equal(app.run('objectHit(page().objects[0],{x:1000,y:1000},0)'),false);

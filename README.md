@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.6.2-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.7.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -15,7 +15,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 ### ✍️ Intelligent Vector Drawing Tools
 - **Velocity-Tapered Pen**: Freehand drawing with smooth quadratic Bézier interpolation and speed-dependent stroke tapering for a natural pen-on-paper feel.
 - **Multiply-Blend Highlighter**: Authentic fluorescent marker that multiplies underneath black ink, preserving line contrast.
-- **28-Shape Drawer**: An icon-only grid with lines, rectangles, ellipses, arrows, rounded rectangles, capsules, triangles, diamonds, pentagons, hexagons, octagons, trapezoids, parallelograms, three stars, hearts, pluses, crosses, lightning bolts, chevrons, block arrows, double-headed arrows, speech bubbles, clouds, semicircles and arcs. Closed shapes support tint fill; all shapes support selection, resizing, rotation, grouping, locks, export and JSON backups. Hold `Shift` to constrain proportions. Existing line, rectangle, ellipse and arrow shortcuts still work; new shapes need no shortcuts.
+- **35-Shape Drawer**: An icon-only grid with the Paint-style set first: line, S-curve, oval, rectangle, rounded rectangle, concave polygon, triangles, diamond, pentagon, hexagon, right/left/up/down arrows, three stars, rectangular/oval/cloud callouts, heart and lightning. The other shapes remain available, including capsules, octagons, trapezoids, parallelograms, pluses, crosses, chevrons, double-headed arrows, clouds, semicircles and arcs. Drag to size each preset. Closed shapes support tint fill; all shapes support selection, resizing, rotation, grouping, locks, export and JSON backups. Hold `Shift` to constrain proportions. Existing line, rectangle, ellipse and arrow shortcuts still work; new shapes need no shortcuts.
 - **Quick & Expanded Colors**: White in the quick-access palette, a dropdown with 60 shades, and the original native custom color picker.
 - **Handwritten Sticky Notes**: Warm pastel sticky notes (Caveat font) with automatic multi-paragraph word wrapping, custom color palettes, and inline editing.
 - **Inline Text Boxes**: Direct typographic annotation (Nunito font) with adjustable font sizes and real-time canvas alignment.
@@ -45,7 +45,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
-- **v1.6.2 Sharper PNG Downloads**: PNG exports render at a higher resolution that increases with board size, with 300–384 DPI print metadata and automatic fallback on constrained browsers. Hover over Shapes for the 28 icon-only choices; click, tap and keyboard access remain available.
+- **v1.7.0 Paint-Style Shapes**: The hover drawer now includes the curve, concave polygon, left/up/down arrows, oval callout and cloud callout, bringing the total to 35. The Paint-style choices come first, and the existing extras remain available. PNG exports retain adaptive resolution and 300–384 DPI metadata.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -59,7 +59,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.6.2`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.7.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
