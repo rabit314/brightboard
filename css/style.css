@@ -732,6 +732,7 @@ body.auto-hide-panels #pagestrip {
 }
 body.auto-hide-panels #toolrail.is-revealed,
 body.auto-hide-panels #toolrail.is-pinned,
+body.auto-hide-panels:has(#shapeDrawer:not([hidden])) #toolrail,
 body.auto-hide-panels #toolrail:has(:focus-visible) {
   opacity: 1;
   pointer-events: auto;

@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.6.0
+   Version: 1.6.1
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -3088,8 +3088,19 @@ function invalidateWrapCaches() {
    14. UI WIRING & INTERACTION
    ================================================================ */
 const toolSizes = { pen: 4, highlighter: 4, eraser: 4, ...Object.fromEntries(SHAPE_TOOLS.map(type => [type, 4])) };
+let shapeDrawerHoverTimer = null;
+let shapeDrawerHoverOpened = false;
+
+function cancelShapeDrawerClose() {
+  clearTimeout(shapeDrawerHoverTimer);
+  shapeDrawerHoverTimer = null;
+}
 
 function closeToolPopup(id, restoreFocus = false) {
+  if (id === 'shapeDrawer') {
+    cancelShapeDrawerClose();
+    shapeDrawerHoverOpened = false;
+  }
   const popup = $(id);
   if (popup.hidden) return false;
   popup.hidden = true;
@@ -3103,20 +3114,70 @@ function positionToolPopup(id) {
   const popup = $(id);
   const rect = $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn').getBoundingClientRect();
   const bounds = popup.getBoundingClientRect();
-  const left = id === 'shapeDrawer' ? $('toolrail').getBoundingClientRect().right + 12 : rect.left;
+  const rail = $('toolrail');
+  // Anchor to the toolbox's final position while its reveal animation is moving.
+  const railRight = Number.isFinite(rail.offsetLeft) && Number.isFinite(rail.offsetWidth)
+    ? rail.offsetLeft + rail.offsetWidth : rail.getBoundingClientRect().right;
+  const left = id === 'shapeDrawer' ? railRight + 12 : rect.left;
   const top = id === 'shapeDrawer' ? rect.top : rect.bottom + 10;
   popup.style.left = clamp(left, 8, Math.max(8, VW - bounds.width - 8)) + 'px';
   popup.style.top = clamp(top, 8, Math.max(8, VH - bounds.height - 8)) + 'px';
 }
 
-function toggleToolPopup(id) {
-  if (closeToolPopup(id, true)) return;
-  for (const other of ['colorPalette', 'shapeDrawer']) closeToolPopup(other);
+function openToolPopup(id, focus = true) {
+  for (const other of ['colorPalette', 'shapeDrawer']) if (other !== id) closeToolPopup(other);
   const popup = $(id);
   popup.hidden = false;
   $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn').setAttribute('aria-expanded', 'true');
   positionToolPopup(id);
-  popup.querySelector('button')?.focus();
+  if (focus) popup.querySelector('button')?.focus();
+}
+
+function toggleToolPopup(id) {
+  if (!closeToolPopup(id, true)) openToolPopup(id);
+}
+
+function bindShapeDrawerHover() {
+  const trigger = $('shapesBtn'), drawer = $('shapeDrawer');
+  let pointerInside = false;
+  const closeLater = e => {
+    if (drawer.contains(e.relatedTarget) || trigger.contains(e.relatedTarget)) return;
+    cancelShapeDrawerClose();
+    if (!shapeDrawerHoverOpened) return;
+    // Allow the pointer to cross the gap between the toolbox and the drawer.
+    shapeDrawerHoverTimer = setTimeout(() => {
+      shapeDrawerHoverTimer = null;
+      if (!drawer.contains(document.activeElement)) closeToolPopup('shapeDrawer');
+    }, 260);
+  };
+  trigger.addEventListener('pointerenter', e => {
+    if (e.pointerType !== 'mouse' || e.buttons || action || activePtrs.size) return;
+    pointerInside = true;
+    cancelShapeDrawerClose();
+    if (drawer.hidden) {
+      openToolPopup('shapeDrawer', false);
+      shapeDrawerHoverOpened = true;
+    }
+  });
+  drawer.addEventListener('pointerenter', e => {
+    if (e.pointerType !== 'mouse') return;
+    pointerInside = true;
+    cancelShapeDrawerClose();
+  });
+  const leave = e => {
+    pointerInside = false;
+    closeLater(e);
+  };
+  trigger.addEventListener('pointerleave', leave);
+  drawer.addEventListener('pointerleave', leave);
+  drawer.addEventListener('focusout', e => { if (!pointerInside) closeLater(e); });
+  trigger.onclick = () => {
+    if (shapeDrawerHoverOpened && !drawer.hidden) {
+      cancelShapeDrawerClose();
+      shapeDrawerHoverOpened = false;
+      drawer.querySelector('button')?.focus();
+    } else toggleToolPopup('shapeDrawer');
+  };
 }
 window.addEventListener('resize', () => {
   for (const id of ['colorPalette', 'shapeDrawer']) if (!$(id).hidden) positionToolPopup(id);
@@ -3448,7 +3509,7 @@ function bindUI() {
       if (fromDrawer) $('shapesBtn').focus();
     });
   $('paletteBtn').onclick = () => toggleToolPopup('colorPalette');
-  $('shapesBtn').onclick = () => toggleToolPopup('shapeDrawer');
+  bindShapeDrawerHover();
   document.addEventListener('pointerdown', e => {
     for (const id of ['colorPalette', 'shapeDrawer']) {
       const trigger = $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn');
