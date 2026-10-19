@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.7.1
+   Version: 1.7.2
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -522,16 +522,24 @@ function drawShape(c, o) {
       c.stroke();
     }
   } else if (o.type === 'arrow') {
-    c.beginPath();
-    c.moveTo(o.x0, o.y0);
-    c.lineTo(o.x1, o.y1);
-    c.stroke();
+    const len = Math.hypot(o.x1 - o.x0, o.y1 - o.y0);
+    if (!len) { c.restore(); return; }
     const head = arrowHead(o);
+    const bx = (head[1].x + head[2].x) / 2, by = (head[1].y + head[2].y) / 2;
+    const angle = Math.atan2(o.y1 - o.y0, o.x1 - o.x0);
+    const half = Math.max(1, o.width) / 2;
+    const nx = -Math.sin(angle) * half, ny = Math.cos(angle) * half;
+    // One silhouette joins the shaft at the head's base, with a rounded tail only.
     c.fillStyle = o.color;
     c.beginPath();
-    c.moveTo(head[0].x, head[0].y);
-    c.lineTo(head[1].x, head[1].y);
+    c.moveTo(o.x0 - nx, o.y0 - ny);
+    c.lineTo(bx - nx, by - ny);
     c.lineTo(head[2].x, head[2].y);
+    c.lineTo(head[0].x, head[0].y);
+    c.lineTo(head[1].x, head[1].y);
+    c.lineTo(bx + nx, by + ny);
+    c.lineTo(o.x0 + nx, o.y0 + ny);
+    c.arc(o.x0, o.y0, half, angle + Math.PI / 2, angle + Math.PI * 1.5);
     c.closePath();
     c.fill();
   }
@@ -1129,9 +1137,21 @@ function objectHit(o, p, tol) {
     for (const seg of strokeSegments(o)) if (quadraticHit(p, seg, t + seg.width / 2 + 4)) return true;
     return false;
   }
-  if (o.type === 'line' || o.type === 'arrow') {
-    return distSeg(p.x, p.y, o.x0, o.y0, o.x1, o.y1) <= t + Math.max(1, o.width) / 2 + 5 ||
-      (o.type === 'arrow' && triangleHit(p, arrowHead(o), t + 4));
+  if (o.type === 'line') {
+    return distSeg(p.x, p.y, o.x0, o.y0, o.x1, o.y1) <= t + Math.max(1, o.width) / 2 + 5;
+  }
+  if (o.type === 'arrow') {
+    const len = Math.hypot(o.x1 - o.x0, o.y1 - o.y0);
+    if (!len) return false;
+    const ux = (o.x1 - o.x0) / len, uy = (o.y1 - o.y0) / len;
+    const dx = p.x - o.x0, dy = p.y - o.y0;
+    const along = dx * ux + dy * uy, across = Math.abs(-dx * uy + dy * ux);
+    const head = arrowHead(o), half = Math.max(1, o.width) / 2;
+    const bx = (head[1].x + head[2].x) / 2, by = (head[1].y + head[2].y) / 2;
+    const shaftLength = (bx - o.x0) * ux + (by - o.y0) * uy;
+    const shaftHit = along < 0 ? Math.hypot(along, across) <= half + t + 4
+      : Math.hypot(Math.max(0, along - shaftLength), Math.max(0, across - half)) <= t + 4;
+    return shaftHit || triangleHit(p, head, t + 4);
   }
 
   let tp = p;

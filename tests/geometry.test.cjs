@@ -111,6 +111,19 @@ test('resizing uses drag distance, without adding the selection handle padding',
   }
 });
 
+test('arrow selection excludes the removed shaft overhang at every angle and thickness', () => {
+  const app = createApp();
+  for (const length of [20,400]) for (const width of [1,4,48,96]) for (const angle of [0,Math.PI/2,Math.PI,Math.PI*1.5,Math.PI/4,Math.PI*1.3]) {
+    const ux=Math.cos(angle),uy=Math.sin(angle);
+    const arrow={type:'arrow',x0:200,y0:200,x1:200+ux*length,y1:200+uy*length,width,color:'#23282F'};
+    app.run(`globalThis.testArrow=${JSON.stringify(arrow)};`);
+    assert.equal(app.run(`objectHit(testArrow,{x:${arrow.x1+ux*8},y:${arrow.y1+uy*8}},0)`),false);
+    assert.equal(app.run(`objectHit(testArrow,{x:${arrow.x1-ux},y:${arrow.y1-uy}},0)`),true);
+    assert.equal(app.run(`objectHit(testArrow,{x:${200-ux*width/4},y:${200-uy*width/4}},0)`),true);
+  }
+  assert.equal(app.run(`objectHit({...testArrow,x1:200,y1:200},{x:200,y:200},0)`),false);
+});
+
 test('arrow bounds contain the rendered head and the head can be selected or erased', () => {
   const app = createApp();
   app.run("fixtureArrow={id:'arrow',type:'arrow',x0:0,y0:0,x1:1000,y1:0,width:48,color:'#23282F'}; page().objects=[fixtureArrow]");
