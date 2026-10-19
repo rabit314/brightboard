@@ -15,6 +15,11 @@
   --shadow-sm: 0 3px 10px rgba(96, 76, 42, .12);
   --toolbar-bottom: 76px;
   --board-bottom-space: 100px;
+  --viewport-height: 100dvh;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 * {
@@ -41,6 +46,10 @@ body {
   -webkit-user-select: none;
   background: var(--paper);
 }
+button { touch-action: manipulation; }
+button svg { pointer-events: none; }
+#boardOptions { display: contents; }
+#mobileOptionsBtn, #editorDone { display: none; }
 
 /* ---------- the board itself ---------- */
 #board {
@@ -1104,81 +1113,153 @@ kbd {
   #exportBtn { padding: 0 10px; }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px), (pointer: coarse) {
   :root {
-    --board-bottom-space: 82px;
+    --board-bottom-space: calc(146px + var(--safe-bottom));
   }
   #topbar {
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    padding: 6px 10px;
+    top: calc(8px + var(--safe-top));
+    left: calc(8px + var(--safe-left));
+    right: calc(8px + var(--safe-right));
+    padding: 5px 8px;
     gap: 6px;
-    row-gap: 6px;
+    max-height: calc(var(--viewport-height) - var(--board-bottom-space) - var(--safe-top) - 24px);
+    overscroll-behavior: contain;
   }
-  .brand-name {
-    display: none;
+  .brand { flex: 1; }
+  .brand-name { display: none; }
+  .ibtn, .ibtn.sm, .tbtn, .seg button, #zoomLabel {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    flex-shrink: 0;
   }
-  .brand { padding-right: 0; }
-  .tb-group { gap: 3px; }
-  .ibtn { width: 32px; height: 32px; }
   #historyGroup .vdiv { display: none; }
-  #actionsGroup { margin-left: auto; }
-  #bgGroup { order: 2; flex: 1 0 calc(100% - 156px); margin-left: 0; }
-  #zoomGroup { order: 2; }
-  #zoomGroup .ibtn { width: 30px; }
-  #zoomLabel { min-width: 40px; }
-  .seg button { width: 28px; height: 28px; }
-  #ctxGroup { order: 3; gap: 8px; row-gap: 6px; padding-top: 7px; }
-  .btn-text {
+  #mobileOptionsBtn { display: grid; margin-left: auto; }
+  #boardOptions {
     display: none;
+    order: 4;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line2);
   }
-  #exportBtn {
-    padding: 0;
-    width: 32px;
-    height: 32px;
-    justify-content: center;
+  #topbar.options-open #boardOptions { display: flex; }
+  #topbar #bgGroup, #topbar #zoomGroup, #topbar #actionsGroup { order: 0; margin-left: 0; flex: 0 0 auto; }
+  #topbar #ctxGroup {
+    order: 2;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 12px;
+    padding: 4px;
+    scrollbar-width: thin;
+    overscroll-behavior: contain;
   }
+  #swatchRow { flex-wrap: nowrap; }
+  #swatchRow > button.swatch { display: none; }
+  #ctxGroup .lbl { display: none; }
+  .swatch.custom { width: 36px; height: 36px; margin: 4px; }
+  .swatch.custom::after { background: var(--active-ink, var(--ink)); }
+  .swatch.custom input { width: 100%; height: 100%; }
+  .nswatch { width: 44px; height: 44px; }
+  input[type=range] { width: 100px; height: 44px; touch-action: pan-y; }
+  input[type=range]::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: -10px; }
+  input[type=range]::-moz-range-thumb { width: 20px; height: 20px; }
+  #exportBtn { height: 44px; }
+  #exportBtn .btn-text { display: inline; }
   #toolrail {
-    left: 8px;
+    left: calc(8px + var(--safe-left));
+    right: calc(8px + var(--safe-right));
+    top: auto;
+    bottom: calc(8px + var(--safe-bottom));
+    transform: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
     padding: 5px;
+    gap: 4px;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+    touch-action: pan-x;
+    scrollbar-width: thin;
   }
-  .tbtn {
-    width: 36px;
-    height: 36px;
-  }
-  .tbtn svg {
-    width: 18px;
-    height: 18px;
-  }
+  #toolrail .rdiv { width: 1px; height: 28px; margin: 0 4px; }
+  #pinToolbox, #pinPages { display: none; }
   #pagestrip {
-    bottom: 8px;
-    max-width: calc(100vw - 136px);
+    bottom: calc(74px + var(--safe-bottom));
+    left: calc(8px + var(--safe-left));
+    transform: none;
+    max-width: calc(100vw - 96px - var(--safe-left) - var(--safe-right));
     padding: 5px;
+    gap: 6px;
+    overscroll-behavior: contain;
+    touch-action: pan-x;
   }
-  .pthumb {
-    width: 92px;
-    height: 52px;
-  }
-  #addPage {
-    width: 32px;
-    height: 52px;
-  }
+  .pthumb { width: 140px; height: 56px; padding-right: 48px; }
+  .pdel { top: 50%; transform: translateY(-50%); width: 44px; height: 44px; opacity: .85; }
+  #addPage { width: 44px; height: 56px; }
   #versionBadge {
-    bottom: 8px;
-    right: 8px;
+    bottom: calc(84px + var(--safe-bottom));
+    right: calc(8px + var(--safe-right));
+    min-height: 44px;
     font-size: 10px;
-    padding: 2px 7px;
+    padding: 4px 8px;
   }
   #saveStatus { bottom: calc(var(--board-bottom-space) + 8px); }
-}
-
-@media (max-width: 599px) {
-  #toolrail { grid-template-columns: repeat(2, 36px); }
-}
-
-@media (max-width: 480px) {
-  input[type=range] {
-    width: 110px;
+  #selActions { max-width: calc(100vw - 20px - var(--safe-left) - var(--safe-right)); overflow-x: auto; overscroll-behavior: contain; }
+  #selActions button { width: 44px; height: 44px; flex: 0 0 auto; }
+  .tool-popup {
+    max-width: calc(100vw - 16px - var(--safe-left) - var(--safe-right));
+    max-height: calc(var(--viewport-height) - var(--safe-top) - var(--safe-bottom) - 16px);
+    overscroll-behavior: contain;
   }
+  #colorPalette { width: 310px; padding: 12px; }
+  #colorGrid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; }
+  #colorGrid .swatch { width: 100%; height: 44px; border: 7px solid white; }
+  #shapeDrawer { width: 280px; }
+  #toast { bottom: calc(var(--board-bottom-space) + 16px); white-space: normal; text-align: center; }
+  #hint { width: max-content; max-width: calc(100vw - 32px); text-align: center; }
+  .modal-card { max-height: calc(var(--viewport-height) - var(--safe-top) - var(--safe-bottom) - 24px); }
+  .modal-actions button, .backup-buttons button { min-height: 44px; }
+  #helpPanel { max-height: calc(var(--viewport-height) - var(--toolbar-bottom) - var(--safe-bottom) - 16px); }
+  body.editing-text #topbar, body.editing-text #toolrail, body.editing-text #pagestrip,
+  body.editing-text #versionBadge, body.editing-text #hint { visibility: hidden; }
+  body.editing-text #editorDone {
+    display: block;
+    position: fixed;
+    top: calc(var(--viewport-top, 0px) + var(--safe-top) + 8px);
+    right: calc(var(--safe-right) + 8px);
+    z-index: 35;
+    min-width: 64px;
+    height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  body.editing-text #textEditor { overflow: auto; -webkit-user-select: text; user-select: text; }
+}
+
+@media (max-width: 380px) {
+  #topbar .brand { display: none; }
+}
+
+/* Put the two docks side by side on a phone turned sideways. */
+@media (min-width: 700px) and (max-width: 1024px) and (max-height: 500px) {
+  :root { --board-bottom-space: calc(86px + var(--safe-bottom)); }
+  #topbar .brand { display: none; }
+  #topbar #ctxGroup { order: 0; flex: 1; border: 0; padding: 0 4px; }
+  #toolrail { right: calc(228px + var(--safe-right)); }
+  #pagestrip { left: auto; right: calc(8px + var(--safe-right)); bottom: calc(8px + var(--safe-bottom)); max-width: 208px; }
+  #versionBadge { bottom: calc(84px + var(--safe-bottom)); min-height: 24px; }
 }

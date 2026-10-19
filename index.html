@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="description" content="BrightBoard — High-performance vector digital whiteboard & notebook web application.">
 <meta name="theme-color" content="#FCFAF3">
 <title>BrightBoard — Smart Whiteboard & Notebook</title>
@@ -86,6 +86,10 @@
 
   <div class="tb-flex"></div>
 
+  <button class="ibtn" id="mobileOptionsBtn" title="Board options" aria-expanded="false" aria-controls="boardOptions">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="white"/><circle cx="15" cy="12" r="2" fill="white"/><circle cx="9" cy="18" r="2" fill="white"/></svg>
+  </button>
+  <div id="boardOptions">
   <div class="tb-group" id="bgGroup">
     <div class="seg" id="bgSeg" title="Page background grid style">
       <button data-bg="blank" title="Blank canvas">
@@ -127,6 +131,7 @@
     <button class="ibtn" id="helpBtn" aria-expanded="false" aria-controls="helpPanel" title="Keyboard Shortcuts & Guide (?)">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M6 12h.001"/><path d="M18 12h.001"/><path d="M10 12h4"/></svg>
     </button>
+  </div>
   </div>
 </header>
 
@@ -191,7 +196,7 @@
 </div>
 
 <!-- ============ version badge (bottom-right) ============ -->
-<button id="versionBadge" title="BrightBoard v1.7.2 — Click for info">v1.7.2</button>
+<button id="versionBadge" title="BrightBoard v1.8.0 — Click for info">v1.8.0</button>
 <div id="saveStatus" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ============ floating selection action bar ============ -->
@@ -221,6 +226,7 @@
 
 <!-- ============ text / sticky editing overlay ============ -->
 <textarea id="textEditor" aria-label="Edit board text or sticky note" maxlength="1000000" spellcheck="false" wrap="off"></textarea>
+<button id="editorDone" hidden>Done</button>
 
 <!-- ============ notifications & hints ============ -->
 <div id="hint">Draw anywhere &nbsp;·&nbsp; <b>K</b> fires the laser &nbsp;·&nbsp; press <b>?</b> for shortcuts</div>
@@ -263,6 +269,8 @@
 
 <!-- ============ shortcuts & help panel ============ -->
 <aside id="helpPanel" aria-label="Keyboard Shortcuts & Help">
+  <h4>Touch controls</h4>
+  <p>Draw with one finger. Use two fingers to pan and pinch to zoom. Swipe the tool dock for more tools. In Select, double-tap text or a note to edit it, then tap Done. Board options contains export, backup, backgrounds and zoom.</p>
   <h4>Keyboard shortcuts</h4>
   <table>
     <tr><td><kbd>V</kbd></td><td>Select / Move / Resize</td></tr>

@@ -77,7 +77,9 @@ function createApp(options = {}) {
   for(const tool of ['select','pen','highlighter','eraser','bucket','line','rect','ellipse','arrow','text','sticky','laser','hand']){const e=makeElement('button');e.className='tbtn';e.dataset.tool=tool;document.getElementById('toolrail').appendChild(e);}
   for(const bg of ['blank','dots','grid','ruled']){const e=makeElement('button');e.dataset.bg=bg;document.getElementById('bgSeg').appendChild(e);}
   const hoverMedia={matches:options.hasHover ?? false,addEventListener(name,cb){(this.handlers[name] ||= []).push(cb);},handlers:{}};
-  const window={innerWidth:1280,innerHeight:720,devicePixelRatio:1,matchMedia:()=>hoverMedia,addEventListener(name,cb){(windowHandlers[name] ||= []).push(cb);}};
+  const window={innerWidth:options.width ?? 1280,innerHeight:options.height ?? 720,devicePixelRatio:1,
+    matchMedia:query=>query==='(hover: hover) and (pointer: fine)'?hoverMedia:{matches:query==='(pointer: coarse)' && !!options.coarsePointer,addEventListener(){}},
+    addEventListener(name,cb){(windowHandlers[name] ||= []).push(cb);}};
   class FakeImage {
     constructor(){this.complete=false;this.naturalWidth=0;this.naturalHeight=0;images.push(this);}
     set src(value){this._src=value;this.complete=false;}get src(){return this._src;}

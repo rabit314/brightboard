@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.7.2-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.8.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -11,6 +11,12 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 ---
 
 ## 🌟 Key Features
+
+### 📱 v1.8.0 Mobile & Tablet Support
+- **Touch Layout**: Scrollable bottom tool dock, accessible page thumbnails, larger touch controls, and a compact Board options menu for backgrounds, zoom, export, backup and help. Landscape phones place tools and pages side by side to preserve drawing space. Layouts respect display cutouts and home indicators.
+- **Touch Navigation & Selection**: Two fingers pan and pinch to zoom; one finger draws with the active tool or pans with Hand. Touch selection and resize/rotate handles have wider hit areas. Starting a pinch with Paint Bucket leaves the drawing untouched.
+- **Keyboard-Aware Editing**: Text and sticky notes stay within the visible screen when the on-screen keyboard opens. A Done button commits the draft and closes the keyboard; drawing controls return after editing. Small text is enlarged for editing to avoid input zoom.
+- **Fit to Available Canvas**: Fit content and selection actions account for the toolbar and bottom docks.
 
 ### ✍️ Intelligent Vector Drawing Tools
 - **Velocity-Tapered Pen**: Freehand drawing with smooth quadratic Bézier interpolation and speed-dependent stroke tapering for a natural pen-on-paper feel.
@@ -45,7 +51,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
-- **v1.7.2 Clean Arrow Tips**: Arrows end in a sharp point, with no rounded shaft protruding through the head, including when thick or enlarged. Arrow selection follows the corrected outline. The curved layer-order icons, 35-shape hover drawer and adaptive high-resolution PNG exports remain available.
+- **Clean Arrow Tips**: Arrows end in a sharp point, with no rounded shaft protruding through the head, including when thick or enlarged. Arrow selection follows the corrected outline. The curved layer-order icons, 35-shape hover drawer and adaptive high-resolution PNG exports remain available.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -59,7 +65,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.7.2`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.8.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
@@ -123,6 +129,8 @@ brightboard/
 ## 🚀 Local Development
 
 No Node build tools or heavy dependencies required!
+
+Validate with `node -c js/app.js` and `node --test tests/*.test.cjs`. For real-browser mobile checks, run `node tests/mobile-browser.cjs` with Chrome installed (or set `CHROME_BIN` to its executable). The browser check uses an isolated profile, emulated touch input, phone/tablet/desktop viewports, and writes screenshots to the ignored `.cache/mobile-review/` directory. Physical Safari/iOS and Android keyboard behavior should also be checked on devices when available.
 
 ### Option 1: Python Built-in Server
 ```bash

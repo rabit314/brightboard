@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.7.2
+   Version: 1.8.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.8.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -219,6 +219,13 @@ const TOOLKEYS = {
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 let VW = 0, VH = 0, dpr = 1;
+const mobileLayout = () => window.innerWidth <= 1024 || !!window.matchMedia?.('(pointer: coarse)').matches;
+
+function visibleViewport() {
+  const vp = window.visualViewport;
+  return { left: vp?.offsetLeft || 0, top: vp?.offsetTop || 0,
+    width: vp?.width || window.innerWidth, height: vp?.height || window.innerHeight };
+}
 
 function resizeCanvas() {
   VW = window.innerWidth;
@@ -262,12 +269,24 @@ function fitView() {
   const b = contentBounds(page().objects);
   if (!b) { setZoom(1); return; }
   const v = page().view;
-  v.zoom = clamp(Math.min((VW - 100) / Math.max(b.w, 1), (VH - 190) / Math.max(b.h, 1)), 0.2, 2);
-  v.panX = (VW - b.w * v.zoom) / 2 - b.x * v.zoom;
-  v.panY = (VH - b.h * v.zoom) / 2 - b.y * v.zoom;
+  const area = boardArea();
+  v.zoom = clamp(Math.min(area.width / Math.max(b.w, 1), area.height / Math.max(b.h, 1)), 0.2, 2);
+  v.panX = area.left + (area.width - b.w * v.zoom) / 2 - b.x * v.zoom;
+  v.panY = area.top + (area.height - b.h * v.zoom) / 2 - b.y * v.zoom;
   constrainView(v);
   updateZoomLabel();
   needsRender = true;
+}
+
+// Keep fitted content and selection controls in the space between the panels.
+function boardArea() {
+  const toolbar = $('topbar').getBoundingClientRect();
+  const top = toolbar.bottom + 12;
+  const bottom = Math.min($('pagestrip').getBoundingClientRect().top, mobileLayout() ? $('toolrail').getBoundingClientRect().top : VH) - 12;
+  const left = mobileLayout() ? (toolbar.left || 8) + 8 : $('toolrail').offsetLeft + $('toolrail').offsetWidth + 20;
+  const right = mobileLayout() ? (toolbar.right || VW - 8) - 8 : VW - 16;
+  return { left: Number.isFinite(left) ? left : 100, top,
+    width: Math.max(80, right - (Number.isFinite(left) ? left : 100)), height: Math.max(60, bottom - top) };
 }
 
 /* ================================================================
@@ -715,12 +734,18 @@ function selHandleScreen(b, v) {
   ];
 }
 
-function getSelectionHandleAt(clientX, clientY, v) {
+function getSelectionHandleAt(clientX, clientY, v, pointerType) {
   const selected = getSelectedObjects();
   if (!selected.length || selected.some(isObjectLocked) || state.tool !== 'select' || editing) return null;
   const b = contentBounds(selected);
   if (!b) return null;
   const hs = selHandleScreen(b, v);
+  if (pointerType === 'touch') {
+    const hd = hs.slice().sort((a, b) => Math.hypot(clientX - a.sx, clientY - a.sy) - Math.hypot(clientX - b.sx, clientY - b.sy))[0];
+    if (Math.hypot(clientX - hd.sx, clientY - hd.sy) <= 22)
+      return { type: hd.h === 'rot' ? 'rotate' : 'resize', handle: hd.h, hd, b, selected };
+    return null;
+  }
   const rotHd = hs.find(h => h.h === 'rot');
   if (rotHd && Math.hypot(clientX - rotHd.sx, clientY - rotHd.sy) <= 12) {
     return { type: 'rotate', handle: 'rot', hd: rotHd, b, selected };
@@ -848,13 +873,14 @@ function drawSelectionOverlay(v) {
 
   // Smart floating toolbar placement
   bar.style.display = 'flex';
-  bar.style.left = clamp(x - 2, 10, Math.max(10, VW - bar.getBoundingClientRect().width - 10)) + 'px';
-  const idealTop = (rotHd ? rotHd.sy : y) - 44;
-  if (idealTop >= 64) {
-    bar.style.top = clamp(idealTop, 64, VH - 150) + 'px';
-  } else {
-    bar.style.top = clamp(y + h + 16, 64, VH - 150) + 'px';
-  }
+  const area = boardArea();
+  const minLeft = mobileLayout() ? area.left : 10;
+  const right = mobileLayout() ? area.left + area.width : VW - 10;
+  bar.style.left = clamp(x - 2, minLeft, Math.max(minLeft, right - bar.getBoundingClientRect().width)) + 'px';
+  const barHeight = bar.getBoundingClientRect().height;
+  const idealTop = (rotHd ? rotHd.sy : y) - barHeight - 12;
+  bar.style.top = clamp(idealTop >= area.top ? idealTop : y + h + 16,
+    area.top, Math.max(area.top, area.top + area.height - barHeight)) + 'px';
 }
 
 function render() {
@@ -1230,6 +1256,9 @@ function finishGesture({ cancel = false, preservePointers = false } = {}) {
     case 'place':
       if (!cancel && !a.moved) createDraftText(a.x, a.y);
       break;
+    case 'fill':
+      if (!cancel && !a.moved) fillAt(a.sx, a.sy);
+      break;
     case 'sticky':
       if (!cancel) createStickyFrom(a);
       break;
@@ -1316,7 +1345,9 @@ canvas.addEventListener('pointerdown', e => {
       },
     };
   } else if (t === 'bucket') {
-    fillAt(e.clientX, e.clientY);
+    // A second finger must be able to start navigation without painting first.
+    if (e.pointerType === 'touch') action = { type: 'fill', sx: e.clientX, sy: e.clientY, moved: false };
+    else fillAt(e.clientX, e.clientY);
   } else if (t === 'eraser') {
     action = { type: 'erase', snapped: false, last: w };
     eraseAt(w, action);
@@ -1375,7 +1406,7 @@ canvas.addEventListener('pointermove', e => {
 
   // Hover feedback with the select tool
   if (state.tool === 'select' && !action && !spaceHeld) {
-    const handleInfo = getSelectionHandleAt(e.clientX, e.clientY, page().view);
+    const handleInfo = getSelectionHandleAt(e.clientX, e.clientY, page().view, e.pointerType);
     const prevHandle = hoveredHandle;
     hoveredHandle = handleInfo;
     if (prevHandle?.handle !== handleInfo?.handle || prevHandle?.type !== handleInfo?.type) {
@@ -1398,9 +1429,15 @@ canvas.addEventListener('pointermove', e => {
   const w = worldFromClient(e.clientX, e.clientY);
 
   switch (action.type) {
-    case 'draw':   addDrawPoint(action, w, e); break;
+    case 'draw': {
+      const samples = e.getCoalescedEvents?.();
+      for (const sample of samples?.length ? samples : [e])
+        addDrawPoint(action, worldFromClient(sample.clientX, sample.clientY), sample);
+      break;
+    }
     case 'erase':  eraseAt(w, action); break;
     case 'shape':  updateShapeDrag(action, w, e); break;
+    case 'fill':
     case 'place':
       if (Math.hypot(e.clientX - action.sx, e.clientY - action.sy) > 6) action.moved = true;
       break;
@@ -1472,6 +1509,7 @@ canvas.addEventListener('pointerenter', e => updateCursorOverlays(e));
 
 /* Double click: edit text / sticky, or create text box on empty board */
 canvas.addEventListener('dblclick', e => {
+  if (e.sourceCapabilities?.firesTouchEvents) return; // Touch editing uses the double-tap path above.
   if (state.tool !== 'select') return;
   const w = worldFromClient(e.clientX, e.clientY);
   const hit = hitTest(w, 0);
@@ -1768,7 +1806,7 @@ function updateMarqueeSelection(a) {
 
 function handleSelectDown(e, w) {
   resetNudgeGroup();
-  const handleInfo = getSelectionHandleAt(e.clientX, e.clientY, page().view);
+  const handleInfo = getSelectionHandleAt(e.clientX, e.clientY, page().view, e.pointerType);
   if (handleInfo) {
     if (handleInfo.type === 'resize') {
       action = {
@@ -1801,7 +1839,7 @@ function handleSelectDown(e, w) {
     }
   }
 
-  const hit = hitTest(w, 0);
+  const hit = hitTest(w, e.pointerType === 'touch' ? 10 / page().view.zoom : 0);
   if (hit) {
     if (e.shiftKey) {
       // Toggle selection with Shift
@@ -2142,8 +2180,12 @@ function openEditor(o, kind, isNew = false) {
   }
   ta.style.display = 'block';
   ta.style.opacity = o.opacity ?? 1;
+  document.body.classList.add('editing-text');
+  $('editorDone').hidden = false;
+  if (mobileLayout() && o.fontSize * page().view.zoom < 16) setZoom(16 / o.fontSize);
   positionEditor();
-  ta.focus();
+  keepEditorVisible();
+  ta.focus({ preventScroll: true });
   try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
   needsRender = true;
 }
@@ -2179,7 +2221,41 @@ function positionEditor() {
     const m = textMetrics({ ...obj, lines: ta.value.split('\n') });
     ta.style.transformOrigin = `${m.w * v.zoom / 2 + 4}px ${m.h * v.zoom / 2 + 2}px`;
   }
+  if (mobileLayout()) {
+    const vp = visibleViewport();
+    editing.editorWidth = parseFloat(ta.style.width);
+    editing.editorHeight = parseFloat(ta.style.height);
+    ta.style.width = Math.min(parseFloat(ta.style.width), Math.max(60, vp.left + vp.width - parseFloat(ta.style.left) - 8)) + 'px';
+    ta.style.height = Math.min(parseFloat(ta.style.height), Math.max(44, vp.top + vp.height - parseFloat(ta.style.top) - 12)) + 'px';
+  }
 }
+
+function keepEditorVisible() {
+  if (!editing || !mobileLayout()) return;
+  const vp = visibleViewport(), v = page().view;
+  const ta = $('textEditor');
+  const x = parseFloat(ta.style.left), y = parseFloat(ta.style.top);
+  const width = Math.min(vp.width - 16, Math.max(200, editing.editorWidth || 200));
+  v.panX += clamp(x, vp.left + 8, Math.max(vp.left + 8, vp.left + vp.width - width - 8)) - x;
+  const height = Math.min(120, Math.max(44, editing.editorHeight || 44));
+  v.panY += clamp(y, vp.top + 64, Math.max(vp.top + 64, vp.top + vp.height - height - 12)) - y;
+  constrainView(v);
+  positionEditor();
+  needsRender = true;
+}
+
+function syncMobileViewport() {
+  const vp = visibleViewport();
+  document.documentElement?.style.setProperty('--viewport-height', vp.height + 'px');
+  document.documentElement?.style.setProperty('--viewport-top', vp.top + 'px');
+  positionEditor();
+  keepEditorVisible();
+  syncToolbarLayout();
+  needsRender = true;
+}
+window.visualViewport?.addEventListener('resize', syncMobileViewport);
+window.visualViewport?.addEventListener('scroll', syncMobileViewport);
+window.addEventListener('resize', syncMobileViewport);
 
 function commitEditor() {
   if (!editing) return;
@@ -2187,8 +2263,11 @@ function commitEditor() {
   const target = pages.find(p => p.id === pageId);
   const val = $('textEditor').value;
   editing = null;
+  document.body.classList.remove('editing-text');
+  $('editorDone').hidden = true;
   $('textEditor').style.display = 'none';
   $('textEditor').style.transform = 'none';
+  $('textEditor').blur();
   if (!target) { needsRender = true; return; }
 
   if (kind === 'text') {
@@ -3016,7 +3095,10 @@ function restoreBoard(d, { recoverMissingImages = false } = {}) {
   });
   finishGesture({ cancel: true });
   editing = null;
+  document.body.classList.remove('editing-text');
+  $('editorDone').hidden = true;
   $('textEditor').style.display = 'none';
+  $('textEditor').blur();
   resetPageHistory();
   pages.splice(0, pages.length, ...restoredPages);
   state.pageIndex = data.pageIndex;
@@ -3355,6 +3437,7 @@ function setColor(c, updateDefault = true) {
   $('customSw').classList.toggle('active', !MARKERS.includes(c));
   $('customColor').value = !MARKERS.includes(c) ? c : (state.custom || c);
   $('customSw').style.setProperty('--cc', !MARKERS.includes(c) ? c : (state.custom || '#FFFFFF'));
+  $('customSw').style.setProperty('--active-ink', c);
 }
 
 function buildNotePalette() {
@@ -3555,6 +3638,7 @@ function toast(msg) {
 
 /* Hint */
 function showHint() {
+  if (mobileLayout()) $('hint').textContent = 'Draw with one finger · Use two fingers to pan and zoom';
   $('hint').classList.add('show');
   setTimeout(hideHint, 6000);
 }
@@ -3570,6 +3654,23 @@ function toggleHelp(force) {
 
 /* Bind UI Event Handlers */
 function bindUI() {
+  $('mobileOptionsBtn').onclick = () => {
+    const open = !$('topbar').classList.contains('options-open');
+    $('topbar').classList.toggle('options-open', open);
+    $('mobileOptionsBtn').setAttribute('aria-expanded', String(open));
+    syncToolbarLayout();
+    needsRender = true;
+  };
+  $('editorDone').onclick = commitEditor;
+  // Keep focus in the editor until the button's click commits the text.
+  $('editorDone').addEventListener('pointerdown', e => e.preventDefault());
+  document.addEventListener('pointerdown', e => {
+    if (!$('topbar').classList.contains('options-open') || $('topbar').contains(e.target)) return;
+    $('topbar').classList.remove('options-open');
+    $('mobileOptionsBtn').setAttribute('aria-expanded', 'false');
+    syncToolbarLayout();
+    needsRender = true;
+  });
   document.querySelectorAll('button').forEach(b => {
     const label = b.dataset.tip || b.title;
     if (b.dataset.tip && !b.title) b.title = b.dataset.tip;
@@ -3751,6 +3852,8 @@ function bindUI() {
       editing.lastValue = ta.value;
       scheduleSave();
     }
+    positionEditor();
+    keepEditorVisible();
     needsRender = true;
   });
   ta.addEventListener('keydown', e => {
@@ -3856,6 +3959,11 @@ window.addEventListener('keydown', e => {
     case 'Escape':
       e.preventDefault();
       if (closeToolPopup('colorPalette', true) || closeToolPopup('shapeDrawer', true)) break;
+      if ($('topbar').classList.contains('options-open')) {
+        $('mobileOptionsBtn').click();
+        $('mobileOptionsBtn').focus();
+        break;
+      }
       if ($('helpPanel').classList.contains('show')) toggleHelp(false);
       else { state.selectedIds.clear(); resetNudgeGroup(); refreshContextUI(); needsRender = true; }
       break;
@@ -3954,19 +4062,21 @@ function bindPanelAutoHide() {
       try { localStorage.setItem('brightboard.panels.v1', JSON.stringify(preferences)); } catch (_) {}
     };
   });
+  const canHide = () => hover.matches && !mobileLayout();
   const syncMode = () => {
-    document.body.classList.toggle('auto-hide-panels', hover.matches);
+    document.body.classList.toggle('auto-hide-panels', canHide());
     panels.forEach(panel => {
       reveal(panel);
-      if (hover.matches) hideLater(panel, 1800);
+      if (canHide()) hideLater(panel, 1800);
     });
   };
   hover.addEventListener('change', syncMode);
+  window.addEventListener('resize', syncMode);
   syncMode();
 
   document.addEventListener('pointermove', e => {
     // Do not bring controls over a stroke or a pan as it crosses an edge.
-    if (!hover.matches || e.pointerType !== 'mouse' || e.buttons || action || activePtrs.size) return;
+    if (!canHide() || e.pointerType !== 'mouse' || e.buttons || action || activePtrs.size) return;
     panels.forEach((panel, index) => {
       const rect = panel.getBoundingClientRect();
       const atEdge = index === 0
@@ -3982,15 +4092,15 @@ function bindPanelAutoHide() {
   });
   panels.forEach(panel => {
     panel.addEventListener('pointerenter', e => {
-      if (hover.matches && e.pointerType === 'mouse' && !e.buttons && !action) reveal(panel);
+      if (canHide() && e.pointerType === 'mouse' && !e.buttons && !action) reveal(panel);
     });
     panel.addEventListener('pointerleave', () => {
-      if (hover.matches) hideLater(panel);
+      if (canHide()) hideLater(panel);
     });
   });
   // Leaving the browser also clears panels whose hover previously kept them open.
   document.addEventListener('pointerout', e => {
-    if (hover.matches && !e.relatedTarget) panels.forEach(panel => hideLater(panel));
+    if (canHide() && !e.relatedTarget) panels.forEach(panel => hideLater(panel));
   });
 }
 
