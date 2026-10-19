@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.7.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.7.1-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -45,7 +45,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Zero-Friction Clear & Delete**: Clearing a page (via top-bar trash button or thumbnail cross) or deleting pages happens instantly without annoying modal prompts.
 - **Full `Ctrl+Z` Recovery**: Pressing `Ctrl+Z` immediately restores accidentally cleared pages or deleted pages with all drawings, shapes, and text intact!
 - **Independent Page Backgrounds**: Choose between **Blank**, **Dotted Grid**, **Square Grid**, and **Ruled Lines** on a per-page basis.
-- **v1.7.0 Paint-Style Shapes**: The hover drawer now includes the curve, concave polygon, left/up/down arrows, oval callout and cloud callout, bringing the total to 35. The Paint-style choices come first, and the existing extras remain available. PNG exports retain adaptive resolution and 300–384 DPI metadata.
+- **v1.7.1 Clearer Layer Icons**: Bring to Front and Send to Back now show curved directional arrows over overlapping layers, making their actions easier to recognize. The hover drawer retains all 35 shapes, with Paint-style choices first, and PNG exports retain adaptive resolution and 300–384 DPI metadata.
 
 ### 📋 Universal Clipboard & Media Import
 - **Multi-Object Copy/Paste**: `Ctrl+C` and `Ctrl+V` clone any selection of elements with automatic offset.
@@ -59,7 +59,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.7.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.7.1`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
