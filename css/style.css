@@ -349,6 +349,34 @@ body {
   cursor: pointer;
 }
 
+/* color dropdown and shape drawer */
+.tool-popup {
+  position: fixed;
+  z-index: 45;
+  width: 244px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--card);
+  color: #4A443D;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.tool-popup[hidden] { display: none; }
+.tool-popup h3 { margin: 0 0 14px; font-size: 15px; }
+.tool-popup p { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: #756D61; }
+#colorGrid { display: grid; grid-template-columns: repeat(6, 24px); gap: 12px; }
+#colorGrid .swatch { width: 24px; height: 24px; }
+.shape-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.shape-grid .tbtn { width: 100%; height: 72px; gap: 5px; align-content: center; font: inherit; font-size: 12px; }
+.shape-grid .tbtn svg { margin: auto; }
+.shape-grid small { opacity: .65; margin-left: 4px; font-size: 10px; }
+#selActions button:disabled { opacity: .35; cursor: default; }
+#selActions button:disabled:hover { background: transparent; }
+#selActions button.on { color: #FFD2A8; background: rgba(255, 255, 255, .15); }
+
 /* sticky-note palette */
 .nswatch {
   width: 20px;

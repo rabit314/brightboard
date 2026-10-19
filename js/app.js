@@ -1,18 +1,30 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.4.1
+   Version: 1.5.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
 const MARKERS = ['#23282F', '#D93A3A', '#E8722A', '#C99700', '#2F9E44',
-                 '#0C8599', '#1F6FEB', '#7048E8', '#D6336C'];
+                 '#0C8599', '#1F6FEB', '#7048E8', '#D6336C', '#FFFFFF'];
+const PALETTE = [
+  ['#FFFFFF','#E5E7EB','#9CA3AF','#6B7280','#374151','#000000'],
+  ['#FEE2E2','#FCA5A5','#F87171','#EF4444','#B91C1C','#7F1D1D'],
+  ['#FFEDD5','#FDBA74','#FB923C','#F97316','#C2410C','#7C2D12'],
+  ['#FEF9C3','#FDE047','#FACC15','#EAB308','#A16207','#713F12'],
+  ['#DCFCE7','#86EFAC','#4ADE80','#22C55E','#15803D','#14532D'],
+  ['#CFFAFE','#67E8F9','#22D3EE','#06B6D4','#0E7490','#164E63'],
+  ['#DBEAFE','#93C5FD','#60A5FA','#3B82F6','#1D4ED8','#1E3A8A'],
+  ['#EDE9FE','#C4B5FD','#A78BFA','#8B5CF6','#6D28D9','#4C1D95'],
+  ['#FCE7F3','#F9A8D4','#F472B6','#EC4899','#BE185D','#831843'],
+  ['#F5E6D3','#D7B899','#B08968','#8B5E3C','#68402A','#422819'],
+].flat();
 const NOTES = ['#FFE9A8', '#FFD2A8', '#C4E8CE', '#C4DDF0', '#E4CDF2'];
 const HIST_MAX = 30;
 const TH_W = 144, TH_H = 81;
@@ -82,6 +94,28 @@ let lastTapPoint = null;
 
 const getObject = id => page().objects.find(o => o.id === id);
 const getSelectedObjects = () => page().objects.filter(o => state.selectedIds.has(o.id));
+const groupMembers = o => o.groupId ? page().objects.filter(item => item.groupId === o.groupId) : [o];
+const isObjectLocked = o => !!o.locked;
+const editableSelection = () => getSelectedObjects().filter(o => !isObjectLocked(o));
+function normalizeGroupLocks(objects) {
+  const lockedGroups = new Set(objects.filter(o => o.groupId && o.locked).map(o => o.groupId));
+  objects.forEach(o => { if (lockedGroups.has(o.groupId)) o.locked = true; });
+}
+function expandGroupedSelection(ids) {
+  const groups = new Set(page().objects.filter(o => ids.has(o.id) && o.groupId).map(o => o.groupId));
+  return new Set(page().objects.filter(o => ids.has(o.id) || groups.has(o.groupId)).map(o => o.id));
+}
+function cloneObjects(objects) {
+  const groups = new Map();
+  return objects.map(o => {
+    const c = cloneObj(o);
+    if (c.groupId) {
+      if (!groups.has(c.groupId)) groups.set(c.groupId, uid());
+      c.groupId = groups.get(c.groupId);
+    }
+    return c;
+  });
+}
 const removeObject = id => {
   const p = page().objects;
   const i = p.findIndex(o => o.id === id);
@@ -584,7 +618,7 @@ function selHandleScreen(b, v) {
 
 function getSelectionHandleAt(clientX, clientY, v) {
   const selected = getSelectedObjects();
-  if (!selected.length || state.tool !== 'select' || editing) return null;
+  if (!selected.length || selected.some(isObjectLocked) || state.tool !== 'select' || editing) return null;
   const b = contentBounds(selected);
   if (!b) return null;
   const hs = selHandleScreen(b, v);
@@ -610,7 +644,8 @@ function drawSelectionOverlay(v) {
   if (!hs.length) { bar.style.display = 'none'; return; }
   const { sx: x, sy: y } = hs[0];
   const w = hs[1].sx - x, h = hs[3].sy - y;
-  const rotHd = hs.find(h => h.h === 'rot');
+  const locked = selected.some(isObjectLocked);
+  const rotHd = locked ? null : hs.find(h => h.h === 'rot');
 
   ctx.save();
   ctx.strokeStyle = ACCENT;
@@ -632,6 +667,7 @@ function drawSelectionOverlay(v) {
 
   // Corner resize handles
   for (const hd of hs) {
+    if (locked) break;
     if (hd.h === 'rot') continue;
     ctx.fillStyle = '#fff';
     ctx.beginPath();
@@ -713,7 +749,7 @@ function drawSelectionOverlay(v) {
 
   // Smart floating toolbar placement
   bar.style.display = 'flex';
-  bar.style.left = clamp(x - 2, 10, VW - 140) + 'px';
+  bar.style.left = clamp(x - 2, 10, Math.max(10, VW - bar.getBoundingClientRect().width - 10)) + 'px';
   const idealTop = (rotHd ? rotHd.sy : y) - 44;
   if (idealTop >= 64) {
     bar.style.top = clamp(idealTop, 64, VH - 150) + 'px';
@@ -1067,7 +1103,7 @@ canvas.addEventListener('pointerdown', e => {
       lastTapPoint && Math.hypot(e.clientX - lastTapPoint.x, e.clientY - lastTapPoint.y) < 24) {
     const w = worldFromClient(e.clientX, e.clientY);
     const hit = hitTest(w, 4);
-    if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
+    if (hit && !hit.groupId && !isObjectLocked(hit) && (hit.type === 'text' || hit.type === 'sticky')) {
       state.selectedIds = new Set([hit.id]);
       resetNudgeGroup();
       refreshContextUI();
@@ -1265,7 +1301,7 @@ canvas.addEventListener('dblclick', e => {
   if (state.tool !== 'select') return;
   const w = worldFromClient(e.clientX, e.clientY);
   const hit = hitTest(w, 0);
-  if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
+  if (hit && !hit.groupId && !isObjectLocked(hit) && (hit.type === 'text' || hit.type === 'sticky')) {
     state.selectedIds = new Set([hit.id]);
     resetNudgeGroup();
     refreshContextUI();
@@ -1448,10 +1484,12 @@ function eraseAt(w, a) {
       y: a.last.y + (w.y - a.last.y) * i / steps
     };
     const hit = hitTest(p, r);
-    if (hit) {
+    if (hit && !isObjectLocked(hit)) {
       if (!a.snapped) { pushUndo(); a.snapped = true; }
-      removeObject(hit.id);
-      if (state.selectedIds.has(hit.id)) state.selectedIds.delete(hit.id);
+      for (const member of groupMembers(hit)) {
+        removeObject(member.id);
+        state.selectedIds.delete(member.id);
+      }
       removed = true;
     }
   }
@@ -1505,6 +1543,36 @@ function syncToolbarToSelected(o) {
   refreshContextUI();
 }
 
+function toggleSelectionLock() {
+  finishGesture({ cancel: true });
+  commitEditor();
+  const selected = getSelectedObjects();
+  if (!selected.length) return;
+  const lock = !selected.every(isObjectLocked);
+  pushUndo();
+  selected.forEach(o => { o.locked = lock; });
+  resetNudgeGroup();
+  scheduleThumb();
+  refreshContextUI();
+  toast(lock ? 'Selection locked' : 'Selection unlocked');
+}
+
+function groupSelection(ungroup = false) {
+  finishGesture({ cancel: true });
+  commitEditor();
+  const selected = getSelectedObjects();
+  if (!selected.length || selected.some(isObjectLocked)) return;
+  if (ungroup ? !selected.some(o => o.groupId) : selected.length < 2) return;
+  if (!ungroup && selected[0].groupId && selected.every(o => o.groupId === selected[0].groupId)) return;
+  pushUndo();
+  const id = uid();
+  selected.forEach(o => { if (ungroup) delete o.groupId; else o.groupId = id; });
+  resetNudgeGroup();
+  scheduleThumb();
+  refreshContextUI();
+  toast(ungroup ? 'Selection ungrouped' : 'Selection grouped');
+}
+
 function updateMarqueeSelection(a) {
   const mx = Math.min(a.x0, a.x1);
   const my = Math.min(a.y0, a.y1);
@@ -1519,7 +1587,7 @@ function updateMarqueeSelection(a) {
       currentSelection.add(o.id);
     }
   }
-  state.selectedIds = currentSelection;
+  state.selectedIds = expandGroupedSelection(currentSelection);
   resetNudgeGroup();
   refreshContextUI();
 }
@@ -1563,21 +1631,21 @@ function handleSelectDown(e, w) {
   if (hit) {
     if (e.shiftKey) {
       // Toggle selection with Shift
-      if (state.selectedIds.has(hit.id)) state.selectedIds.delete(hit.id);
-      else state.selectedIds.add(hit.id);
+      const remove = state.selectedIds.has(hit.id);
+      groupMembers(hit).forEach(o => remove ? state.selectedIds.delete(o.id) : state.selectedIds.add(o.id));
       syncToolbarToSelected(hit);
     } else if (!state.selectedIds.has(hit.id)) {
       // Single click on unselected item selects only this item
-      state.selectedIds = new Set([hit.id]);
+      state.selectedIds = new Set(groupMembers(hit).map(o => o.id));
       syncToolbarToSelected(hit);
     }
 
     const currentSelected = getSelectedObjects();
+    if (!currentSelected.length || currentSelected.some(isObjectLocked)) { refreshContextUI(); return; }
     if (e.altKey) {
       // Alt-drag = quick duplicate all selected
       const offset = constrainTranslation(currentSelected, 16, 16);
-      const clones = currentSelected.map(o => {
-        const c = cloneObj(o);
+      const clones = cloneObjects(currentSelected).map(c => {
         translateObj(c, offset.dx, offset.dy);
         return c;
       });
@@ -1778,13 +1846,14 @@ function doRotate(w, e, a) {
 
 function deleteSelection() {
   finishGesture({ cancel: true });
-  if (!state.selectedIds.size) return;
+  const selected = editableSelection();
+  if (!selected.length) return;
   commitEditor();
   pushUndo();
-  for (const id of state.selectedIds) {
-    removeObject(id);
+  for (const o of selected) {
+    removeObject(o.id);
+    state.selectedIds.delete(o.id);
   }
-  state.selectedIds.clear();
   resetNudgeGroup();
   refreshContextUI();
   scheduleThumb();
@@ -1797,8 +1866,7 @@ function duplicateSelection() {
   if (!selected.length) return;
   commitEditor();
   const offset = constrainTranslation(selected, 24, 24);
-  const clones = selected.map(o => {
-    const c = cloneObj(o);
+  const clones = cloneObjects(selected).map(c => {
     translateObj(c, offset.dx, offset.dy);
     return c;
   });
@@ -1813,7 +1881,7 @@ function duplicateSelection() {
 
 function bringSelToFront() {
   finishGesture({ cancel: true });
-  const selected = getSelectedObjects();
+  const selected = editableSelection();
   if (!selected.length) return;
   const arr = page().objects;
   pushUndo();
@@ -1828,7 +1896,7 @@ function bringSelToFront() {
 
 function sendSelToBack() {
   finishGesture({ cancel: true });
-  const selected = getSelectedObjects();
+  const selected = editableSelection();
   if (!selected.length) return;
   const arr = page().objects;
   pushUndo();
@@ -1849,7 +1917,7 @@ function resetNudgeGroup() {
 
 function nudge(dx, dy) {
   const selected = getSelectedObjects();
-  if (!selected.length) return;
+  if (!selected.length || selected.some(isObjectLocked)) return;
   ({ dx, dy } = constrainTranslation(selected, dx, dy));
   if (!dx && !dy) return;
   const p = page();
@@ -1877,6 +1945,7 @@ function createDraftText(x, y) {
 }
 
 function openEditor(o, kind, isNew = false) {
+  if (isObjectLocked(o)) return;
   commitEditor();
   editing = {
     obj: o,
@@ -2221,13 +2290,13 @@ function pasteBoardObjects(data) {
     if (points > 500000) throw new Error('Clipboard has too many points');
     return obj;
   });
+  normalizeGroupLocks(objects);
   const remapped = new Map();
   objects.filter(o => o.type === 'image').forEach(o => {
     if (!remapped.has(o.imgId)) remapped.set(o.imgId, uid());
   });
   const offset = constrainTranslation(objects, 24, 24);
-  const clones = objects.map(o => {
-    const c = cloneObj(o);
+  const clones = cloneObjects(objects).map(c => {
     if (c.type === 'image') c.imgId = remapped.get(c.imgId);
     translateObj(c, offset.dx, offset.dy);
     return c;
@@ -2780,6 +2849,7 @@ function validateNotebook(data, { recoverMissingImages = false } = {}) {
       if (objectCount > 50000 || pointCount > 500000) throw new Error('Notebook has too many objects or points');
       return obj;
     });
+    normalizeGroupLocks(objects);
     const bg = pd.bg || 'grid';
     if (!['blank', 'dots', 'grid', 'ruled'].includes(bg)) throw new Error('Invalid page background');
     const view = pd.view || { zoom: 1, panX: 0, panY: 0 };
@@ -2822,6 +2892,11 @@ function validateBoardObject(o, assets, ids) {
   if (ids.has(id)) throw new Error('Duplicate object ID');
   ids.add(id);
   const obj = { id, type: o.type };
+  if (o.locked !== undefined) {
+    if (typeof o.locked !== 'boolean') throw new Error('Invalid object lock');
+    obj.locked = o.locked;
+  }
+  if (o.groupId !== undefined) obj.groupId = validateId(o.groupId);
   if (o.opacity !== undefined) obj.opacity = validNumber(o.opacity, 0.01, 1);
   const number = (key, min, max) => { obj[key] = validNumber(o[key], min, max); };
   if (o.type !== 'image') {
@@ -2871,6 +2946,39 @@ function invalidateWrapCaches() {
    ================================================================ */
 const toolSizes = { pen: 4, highlighter: 4, eraser: 4, line: 4, rect: 4, ellipse: 4, arrow: 4 };
 
+function closeToolPopup(id, restoreFocus = false) {
+  const popup = $(id);
+  if (popup.hidden) return false;
+  popup.hidden = true;
+  const trigger = $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn');
+  trigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) trigger.focus();
+  return true;
+}
+
+function positionToolPopup(id) {
+  const popup = $(id);
+  const rect = $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn').getBoundingClientRect();
+  const bounds = popup.getBoundingClientRect();
+  const left = id === 'shapeDrawer' ? $('toolrail').getBoundingClientRect().right + 12 : rect.left;
+  const top = id === 'shapeDrawer' ? rect.top : rect.bottom + 10;
+  popup.style.left = clamp(left, 8, Math.max(8, VW - bounds.width - 8)) + 'px';
+  popup.style.top = clamp(top, 8, Math.max(8, VH - bounds.height - 8)) + 'px';
+}
+
+function toggleToolPopup(id) {
+  if (closeToolPopup(id, true)) return;
+  for (const other of ['colorPalette', 'shapeDrawer']) closeToolPopup(other);
+  const popup = $(id);
+  popup.hidden = false;
+  $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn').setAttribute('aria-expanded', 'true');
+  positionToolPopup(id);
+  popup.querySelector('button')?.focus();
+}
+window.addEventListener('resize', () => {
+  for (const id of ['colorPalette', 'shapeDrawer']) if (!$(id).hidden) positionToolPopup(id);
+});
+
 function syncToolbarLayout() {
   const bar = $('topbar');
   if (bar.getBoundingClientRect && document.documentElement) {
@@ -2883,13 +2991,14 @@ function syncToolbarLayout() {
       bar.classList.toggle('is-wrapped', controls.some(el => el.getBoundingClientRect().top > top + 12));
     }
     document.documentElement.style.setProperty('--toolbar-bottom', (bar.getBoundingClientRect().bottom + 12) + 'px');
+    for (const id of ['colorPalette', 'shapeDrawer']) if (!$(id).hidden) positionToolPopup(id);
   }
 }
 window.addEventListener('resize', syncToolbarLayout);
 
 function updateSelectedProperty(property, value, predicate = () => true) {
   if (state.tool !== 'select') return;
-  const selected = getSelectedObjects().filter(o => predicate(o) && o[property] !== undefined && o[property] !== value);
+  const selected = editableSelection().filter(o => predicate(o) && o[property] !== undefined && o[property] !== value);
   if (!selected.length) return;
   finishGesture({ cancel: true });
   resetNudgeGroup();
@@ -2919,11 +3028,22 @@ function buildSwatches() {
     b.onclick = () => chooseColor(col);
     row.appendChild(b);
   });
+  row.appendChild($('paletteBtn'));
+  PALETTE.forEach(col => {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.dataset.col = col;
+    b.style.background = col;
+    b.title = col;
+    b.setAttribute('aria-label', `Ink color ${col}`);
+    b.onclick = () => { chooseColor(col); closeToolPopup('colorPalette', true); };
+    $('colorGrid').appendChild(b);
+  });
 }
 
 function setColor(c, updateDefault = true) {
   if (updateDefault) state.color = c;
-  document.querySelectorAll('#swatchRow .swatch:not(.custom)')
+  document.querySelectorAll('#swatchRow .swatch:not(.custom), #colorGrid .swatch')
     .forEach(s => {
       const active = s.dataset.col === c;
       s.classList.toggle('active', active);
@@ -2968,12 +3088,17 @@ function setTool(t) {
     state.tool = t;
     if (toolSizes[t] !== undefined) state.size = toolSizes[t];
   }
-  document.querySelectorAll('#toolrail .tbtn[data-tool]')
+  document.querySelectorAll('.tbtn[data-tool]')
     .forEach(b => {
       const active = b.dataset.tool === t;
       b.classList.toggle('active', active);
       b.setAttribute('aria-pressed', String(active));
     });
+  const shape = ['line', 'rect', 'ellipse', 'arrow'].includes(t);
+  $('shapesBtn').classList.toggle('active', shape);
+  $('shapesBtn').setAttribute('aria-label', shape ? `Shapes: ${t}` : 'Shapes');
+  closeToolPopup('shapeDrawer');
+  closeToolPopup('colorPalette');
   $('eraserRing').style.display = 'none';
   $('laserDot').style.display = 'none';
   $('brushPreview').style.display = 'none';
@@ -2982,7 +3107,19 @@ function setTool(t) {
 
 function refreshContextUI() {
   const t = state.tool;
-  const selected = t === 'select' ? getSelectedObjects() : [];
+  const allSelected = t === 'select' ? getSelectedObjects() : [];
+  const selected = allSelected.filter(o => !isObjectLocked(o));
+  const locked = allSelected.some(isObjectLocked);
+  const allLocked = allSelected.length > 0 && allSelected.every(isObjectLocked);
+  $('selLock').title = allLocked ? 'Unlock selection (Ctrl+Shift+L)' : 'Lock selection (Ctrl+Shift+L)';
+  $('selLock').setAttribute('aria-label', $('selLock').title);
+  $('selLock').setAttribute('aria-pressed', String(allLocked));
+  $('selLock').classList.toggle('on', allLocked);
+  $('lockShackle').setAttribute('d', allLocked ? 'M7 11V7a5 5 0 0 1 10 0v4' : 'M7 11V7a5 5 0 0 1 9-3');
+  const oneGroup = allSelected.length > 1 && allSelected[0].groupId && allSelected.every(o => o.groupId === allSelected[0].groupId);
+  $('selGroup').disabled = locked || allSelected.length < 2 || !!oneGroup;
+  $('selUngroup').disabled = locked || !allSelected.some(o => o.groupId);
+  ['selFront','selBack','selDel'].forEach(id => { $(id).disabled = !selected.length; });
   const shapeish = ['line', 'rect', 'ellipse', 'arrow'].includes(t);
   const inkObject = selected.find(o => o.color !== undefined && o.type !== 'sticky');
   const widthObject = selected.find(o => o.width !== undefined);
@@ -3023,6 +3160,7 @@ function refreshContextUI() {
   show('noteRow', nr);
   show('fillRow', fl);
   show('ctxGroup', sw || wr || fr || nr || fl);
+  if (!sw) closeToolPopup('colorPalette');
   canvas.style.cursor = CURSORS[t] || 'default';
   if (canvasPointerType) updateCursorOverlays({ ...lastPtr, clientX: lastPtr.x, clientY: lastPtr.y, pointerType: canvasPointerType });
   requestAnimationFrame(syncToolbarLayout);
@@ -3138,8 +3276,23 @@ function bindUI() {
     icon.setAttribute('aria-hidden', 'true');
     icon.setAttribute('focusable', 'false');
   });
-  document.querySelectorAll('#toolrail .tbtn[data-tool]')
-    .forEach(b => b.onclick = () => setTool(b.dataset.tool));
+  document.querySelectorAll('.tbtn[data-tool]')
+    .forEach(b => b.onclick = () => {
+      const fromDrawer = $('shapeDrawer').contains(b);
+      setTool(b.dataset.tool);
+      if (fromDrawer) $('shapesBtn').focus();
+    });
+  $('paletteBtn').onclick = () => toggleToolPopup('colorPalette');
+  $('shapesBtn').onclick = () => toggleToolPopup('shapeDrawer');
+  document.addEventListener('pointerdown', e => {
+    for (const id of ['colorPalette', 'shapeDrawer']) {
+      const trigger = $(id === 'colorPalette' ? 'paletteBtn' : 'shapesBtn');
+      if (!$(id).contains(e.target) && !trigger.contains(e.target)) closeToolPopup(id);
+    }
+  });
+  $('selLock').onclick = toggleSelectionLock;
+  $('selGroup').onclick = () => groupSelection();
+  $('selUngroup').onclick = () => groupSelection(true);
 
   $('undoBtn').onclick = () => { commitEditor(); undo(); };
   $('redoBtn').onclick = () => { commitEditor(); redo(); };
@@ -3331,7 +3484,13 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod) {
     const k = e.key.toLowerCase();
-    if (k === 'z') {
+    if (k === 'g') {
+      e.preventDefault();
+      groupSelection(e.shiftKey);
+    } else if (k === 'l' && e.shiftKey) {
+      e.preventDefault();
+      toggleSelectionLock();
+    } else if (k === 'z') {
       e.preventDefault();
       commitEditor();
       if (e.shiftKey) redo();
@@ -3393,6 +3552,7 @@ window.addEventListener('keydown', e => {
       break;
     case 'Escape':
       e.preventDefault();
+      if (closeToolPopup('colorPalette', true) || closeToolPopup('shapeDrawer', true)) break;
       if ($('helpPanel').classList.contains('show')) toggleHelp(false);
       else { state.selectedIds.clear(); resetNudgeGroup(); refreshContextUI(); needsRender = true; }
       break;
