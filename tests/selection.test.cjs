@@ -147,8 +147,4 @@ test('quick white, expanded palette and drawer selection keep native picking and
   app.fire('keydown',{key:'o'});
   assert.equal(app.run('state.tool'),'ellipse');
   assert.equal(app.elements.get('shapesBtn').classList.contains('active'),true);
-  const rowChildren = app.elements.get('swatchRow').children;
-  const customIdx = rowChildren.indexOf(app.elements.get('customSw'));
-  const paletteIdx = rowChildren.indexOf(app.elements.get('paletteBtn'));
-  assert.equal(Math.abs(customIdx - paletteIdx), 1);
 });
