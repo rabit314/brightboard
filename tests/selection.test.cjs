@@ -148,3 +148,35 @@ test('quick white, expanded palette and drawer selection keep native picking and
   assert.equal(app.run('state.tool'),'ellipse');
   assert.equal(app.elements.get('shapesBtn').classList.contains('active'),true);
 });
+
+test('eyedropper button is placed beside palette button and samples pointed object color', () => {
+  const app = createApp();
+  const swatchRow = app.elements.get('swatchRow');
+  const paletteIdx = swatchRow.children.indexOf(app.elements.get('paletteBtn'));
+  const eyedropperIdx = swatchRow.children.indexOf(app.elements.get('eyedropperBtn'));
+  assert.ok(paletteIdx >= 0 && eyedropperIdx >= 0, 'both buttons present in swatchRow');
+  assert.equal(eyedropperIdx, paletteIdx + 1, 'eyedropper is directly beside palette button');
+
+  // Push an object with a specific color
+  app.run(`page().objects.push({id:'s1',type:'rect',x0:100,y0:100,x1:300,y1:300,color:'#D93A3A',width:4,fill:false});`);
+  assert.equal(app.run('state.color'), '#23282F');
+
+  // Press 'i' to activate picker
+  app.fire('keydown', { key: 'i' });
+  assert.equal(app.run('state.tool'), 'picker');
+  assert.equal(app.elements.get('eyedropperBtn').classList.contains('active'), true);
+
+  // Click on the object
+  app.elements.get('board').dispatch('pointerdown', { pointerId: 1, button: 0, clientX: 100, clientY: 100, pointerType: 'mouse' });
+  assert.equal(app.run('state.color'), '#D93A3A');
+  assert.equal(app.run('state.tool'), 'pen');
+  assert.equal(app.elements.get('eyedropperBtn').classList.contains('active'), false);
+
+  // Test eyedropperBtn click toggles picker tool
+  app.elements.get('eyedropperBtn').click();
+  assert.equal(app.run('state.tool'), 'picker');
+  // Click on empty canvas returns PAPER color
+  app.elements.get('board').dispatch('pointerdown', { pointerId: 1, button: 0, clientX: 900, clientY: 600, pointerType: 'mouse' });
+  assert.equal(app.run('state.color'), '#FCFAF3');
+  assert.equal(app.run('state.tool'), 'pen');
+});

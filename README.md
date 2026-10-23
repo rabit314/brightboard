@@ -1,7 +1,7 @@
 # 📓 BrightBoard — Smart Whiteboard & Notebook Web App
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-2EA44F?style=for-the-badge&logo=github)](https://github.com/rabit314/brightboard)
-[![Version](https://img.shields.io/badge/Version-v1.8.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
+[![Version](https://img.shields.io/badge/Version-v1.9.0-E4572E?style=for-the-badge)](https://github.com/rabit314/brightboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 A blazing-fast, responsive, multi-page vector whiteboard and notebook web application built with pure HTML5 Canvas and vanilla JavaScript. Designed with a warm classroom paper aesthetic (`#FCFAF3`), persimmon accents (`#E4572E`), zero external framework bloat, and 100% offline-ready embedded vector icons.
@@ -11,6 +11,10 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 ---
 
 ## 🌟 Key Features
+
+### 🎯 v1.9.0 Color Picker (Eyedropper)
+- **Point-and-Sample Eyedropper**: Sample the exact color of any drawing, stroke, shape, text, note, image or background on the board by clicking the eyedropper icon beside the color choosing options or pressing <kbd>I</kbd>.
+- **Dual Sampling**: Leverages native browser `EyeDropper` loupe when available with instant in-canvas pixel-level sampling across all browsers, tablets and mobile touch screens.
 
 ### 📱 v1.8.0 Mobile & Tablet Support
 - **Touch Layout**: Scrollable bottom tool dock, accessible page thumbnails, larger touch controls, and a compact Board options menu for backgrounds, zoom, export, backup and help. Landscape phones place tools and pages side by side to preserve drawing space. Layouts respect display cutouts and home indicators.
@@ -65,7 +69,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 - **Upgrade Recovery**: Older saves with missing image sources retain their other contents and show image placeholders. Original damaged data is preserved and can be downloaded from Backup & Restore; if recovery storage is full, the original save stays protected until downloaded.
 
 ### 🏷️ Discreet Version Badge
-- **Location**: Pinned in the **bottom-right corner** (`v1.8.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
+- **Location**: Pinned in the **bottom-right corner** (`v1.9.0`) with a translucent glassmorphic backdrop. Clicking displays version and status information.
 
 ---
 
@@ -78,6 +82,7 @@ A blazing-fast, responsive, multi-page vector whiteboard and notebook web applic
 | <kbd>H</kbd> | **Highlighter** | Semi-transparent text marker |
 | <kbd>E</kbd> | **Eraser** | Swept-circle object eraser |
 | <kbd>B</kbd> | **Paint Bucket** | Fill the clicked connected colour region |
+| <kbd>I</kbd> | **Color Picker (Eyedropper)** | Sample the color of any element on the canvas |
 | <kbd>L</kbd> | **Line** | Straight vector line |
 | <kbd>R</kbd> | **Rectangle** | Rectangle (Hold <kbd>Shift</kbd> for square) |
 | <kbd>O</kbd> | **Ellipse** | Ellipse (Hold <kbd>Shift</kbd> for circle) |

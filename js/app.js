@@ -1,13 +1,13 @@
 'use strict';
 /* ================================================================
    BRIGHTBOARD — SMART WHITEBOARD & NOTEBOOK ENGINE
-   Version: 1.8.0
+   Version: 1.9.0
    ================================================================ */
 
 /* ================================================================
    1. CONSTANTS & TINY HELPERS
    ================================================================ */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const PAPER = '#FCFAF3';
 const ACCENT = '#E4572E';
 const STICKY_INK = '#4A423A';
@@ -186,6 +186,7 @@ const CURSORS = {
   highlighter: 'none',
   bucket: 'crosshair',
   eraser: 'none',
+  picker: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2318181b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 22 1-1h3l9-9' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='M3 21v-3l9-9' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='m15 6 3.4-3.4a2.12 2.12 0 1 1 3 3L18 9l.4.4a2.12 2.12 0 1 1-3 3l-3.8-3.8a2.12 2.12 0 1 1 3-3l.4.4Z' fill='%23ffffff' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='m2 22 1-1h3l9-9' stroke='%2318181b' stroke-width='2'/%3E%3Cpath d='M3 21v-3l9-9' stroke='%2318181b' stroke-width='2'/%3E%3Cpath d='m15 6 3.4-3.4a2.12 2.12 0 1 1 3 3L18 9l.4.4a2.12 2.12 0 1 1-3 3l-3.8-3.8a2.12 2.12 0 1 1 3-3l.4.4Z' stroke='%2318181b' stroke-width='2' fill='%2318181b'/%3E%3C/svg%3E") 2 22, crosshair`,
   line: 'crosshair',
   rect: 'crosshair',
   ellipse: 'crosshair',
@@ -204,6 +205,7 @@ const TOOLKEYS = {
   h: 'highlighter',
   e: 'eraser',
   b: 'bucket',
+  i: 'picker',
   l: 'line',
   r: 'rect',
   o: 'ellipse',
@@ -1259,6 +1261,9 @@ function finishGesture({ cancel = false, preservePointers = false } = {}) {
     case 'fill':
       if (!cancel && !a.moved) fillAt(a.sx, a.sy);
       break;
+    case 'pick':
+      if (!cancel && !a.moved) pickAt(a.sx, a.sy);
+      break;
     case 'sticky':
       if (!cancel) createStickyFrom(a);
       break;
@@ -1348,6 +1353,9 @@ canvas.addEventListener('pointerdown', e => {
     // A second finger must be able to start navigation without painting first.
     if (e.pointerType === 'touch') action = { type: 'fill', sx: e.clientX, sy: e.clientY, moved: false };
     else fillAt(e.clientX, e.clientY);
+  } else if (t === 'picker') {
+    if (e.pointerType === 'touch') action = { type: 'pick', sx: e.clientX, sy: e.clientY, moved: false };
+    else pickAt(e.clientX, e.clientY);
   } else if (t === 'eraser') {
     action = { type: 'erase', snapped: false, last: w };
     eraseAt(w, action);
@@ -1439,6 +1447,7 @@ canvas.addEventListener('pointermove', e => {
     case 'shape':  updateShapeDrag(action, w, e); break;
     case 'fill':
     case 'place':
+    case 'pick':
       if (Math.hypot(e.clientX - action.sx, e.clientY - action.sy) > 6) action.moved = true;
       break;
     case 'sticky':
@@ -3371,6 +3380,60 @@ function updateSelectedProperty(property, value, predicate = () => true) {
   refreshContextUI();
 }
 
+
+function pickColorAt(clientX, clientY) {
+  try {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const px = Math.floor((clientX - rect.left) * scaleX);
+      const py = Math.floor((clientY - rect.top) * scaleY);
+      if (px >= 0 && px < canvas.width && py >= 0 && py < canvas.height && typeof ctx.getImageData === 'function') {
+        const p = ctx.getImageData(px, py, 1, 1).data;
+        if (p && p.length >= 4 && p[3] > 0) {
+          return '#' + [p[0], p[1], p[2]].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+        }
+      }
+    }
+  } catch (_) {}
+  const w = worldFromClient(clientX, clientY);
+  const hit = hitTest(w, 6 / page().view.zoom);
+  if (hit) {
+    if (hit.color) return hit.color;
+    if (hit.fillColor) return hit.fillColor;
+  }
+  return PAPER;
+}
+
+function pickAt(clientX, clientY) {
+  const col = pickColorAt(clientX, clientY);
+  if (col) {
+    chooseColor(col);
+    toast(`Picked color ${col}`);
+  }
+  setTool(state.prevTool || 'pen');
+}
+
+async function startEyedropper() {
+  if (typeof window !== 'undefined' && window.EyeDropper) {
+    try {
+      const dropper = new window.EyeDropper();
+      const res = await dropper.open();
+      if (res && res.sRGBHex) {
+        chooseColor(res.sRGBHex.toUpperCase());
+        toast(`Picked color ${res.sRGBHex.toUpperCase()}`);
+        return;
+      }
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.message?.includes?.('canceled') || err.message?.includes?.('aborted'))) {
+        return;
+      }
+    }
+  }
+  setTool(state.tool === 'picker' ? (state.prevTool || 'pen') : 'picker');
+}
+
 function chooseColor(col) {
   if (state.tool === 'select') {
     updateSelectedProperty('color', col, o => o.type !== 'sticky');
@@ -3414,6 +3477,7 @@ function buildSwatches() {
     row.appendChild(b);
   });
   row.appendChild($('paletteBtn'));
+  if ($('eyedropperBtn')) row.appendChild($('eyedropperBtn'));
   PALETTE.forEach(col => {
     const b = document.createElement('button');
     b.className = 'swatch';
@@ -3481,6 +3545,11 @@ function setTool(t) {
       b.setAttribute('aria-pressed', String(active));
     });
   const shape = isShapeTool(t);
+  const eyedropper = $('eyedropperBtn');
+  if (eyedropper) {
+    eyedropper.classList.toggle('active', t === 'picker');
+    eyedropper.setAttribute('aria-pressed', String(t === 'picker'));
+  }
   $('shapesBtn').classList.toggle('active', shape);
   $('shapesBtn').setAttribute('aria-label', shape ? `Shapes: ${t}` : 'Shapes');
   closeToolPopup('shapeDrawer');
@@ -3512,7 +3581,7 @@ function refreshContextUI() {
   const fontObject = selected.find(o => o.fontSize !== undefined);
   const noteObject = selected.find(o => o.type === 'sticky');
   const fillObject = selected.find(o => canFillShape(o.type));
-  const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text', 'bucket'].includes(t) || shapeish;
+  const sw = t === 'select' ? !!inkObject : ['pen', 'highlighter', 'text', 'bucket', 'picker'].includes(t) || shapeish;
   const wr = t === 'select' ? !!widthObject : ['pen', 'highlighter', 'eraser'].includes(t) || shapeish;
   const fr = t === 'select' ? !!fontObject : t === 'text';
   const nr = t === 'select' ? !!noteObject : t === 'sticky';
@@ -3687,6 +3756,7 @@ function bindUI() {
       if (fromDrawer) $('shapesBtn').focus();
     });
   $('paletteBtn').onclick = () => toggleToolPopup('colorPalette');
+  if ($('eyedropperBtn')) $('eyedropperBtn').onclick = startEyedropper;
   bindShapeDrawerHover();
   document.addEventListener('pointerdown', e => {
     for (const id of ['colorPalette', 'shapeDrawer']) {

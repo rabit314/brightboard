@@ -314,7 +314,8 @@ button svg { pointer-events: none; }
   background: #FBEAE6;
   color: var(--danger);
 }
-.ibtn.on {
+.ibtn.on,
+.ibtn.active {
   background: #2A251F;
   color: #F5F1E8;
 }
